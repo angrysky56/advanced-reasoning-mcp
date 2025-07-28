@@ -1,0 +1,40 @@
+{
+  "name": "coding_workflow",
+  "domain": "software_development",
+  "description": "Meta-cognitive AI coding protocol implementation workflow",
+  "data": {
+    "phases": {
+      "init": {
+        "observe": "Understand repo structure, design patterns, domain architecture",
+        "defer": "Refrain from code generation until system understanding reaches threshold",
+        "integrate": "Align with existing conventions and architectural philosophy"
+      },
+      "execute": {
+        "target": "Modify primary source directly (no workaround scripts)",
+        "scope": "Enact minimum viable change to fix targeted issue",
+        "leverage": "Prefer existing abstractions over introducing new ones"
+      },
+      "validate": {
+        "test": "Define and run specific validation steps for each change",
+        "verify": "Confirm no degradation of existing behaviors or dependencies"
+      }
+    },
+    "principles": [
+      "DRY",
+      "KISS",
+      "YAGNI",
+      "Zero code duplication",
+      "No Fallbacks",
+      "Transparent Error Handling"
+    ]
+  },
+  "searchable_content": "meta-cognitive ai coding protocol implementation workflow workflow protocol meta-cognitive coding {\n  \"phases\": {\n    \"init\": {\n      \"observe\": \"understand repo structure, design patterns, domain architecture\",\n      \"defer\": \"refrain from code generation until system understanding reaches threshold\",\n      \"integrate\": \"align with existing conventions and architectural philosophy\"\n    },\n    \"execute\": {\n      \"target\": \"modify primary source directly (no workaround scripts)\",\n      \"scope\": \"enact minimum viable change to fix targeted issue\",\n      \"leverage\": \"prefer existing abstractions over introducing new ones\"\n    },\n    \"validate\": {\n      \"test\": \"define and run specific validation steps for each change\",\n      \"verify\": \"confirm no degradation of existing behaviors or dependencies\"\n    }\n  },\n  \"principles\": [\n    \"dry\",\n    \"kiss\",\n    \"yagni\",\n    \"zero code duplication\",\n    \"no fallbacks\",\n    \"transparent error handling\"\n  ]\n}",
+  "tags": [
+    "workflow",
+    "protocol",
+    "meta-cognitive",
+    "coding"
+  ],
+  "created": 1753717601578,
+  "modified": 1753717601578
+}

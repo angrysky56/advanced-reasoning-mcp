@@ -67,14 +67,196 @@ interface AdvancedThoughtData {
   needsMoreThoughts?: boolean;
 }
 
+// ===== SYSTEM JSON STORAGE =====
+// SystemJSON provides structured data storage for workflows, instructions, and domain-specific data
+// Storage: memory_data/system_json/{name}.json
+
+interface SystemJSONData {
+  name: string;
+  domain: string;
+  description: string;
+  data: Record<string, unknown>;
+  searchable_content: string;
+  tags: string[];
+  created: number;
+  modified: number;
+}
+
+class SystemJSON {
+  private systemJsonPath: string;
+
+  constructor() {
+    const projectDir = path.dirname(new URL(import.meta.url).pathname);
+    this.systemJsonPath = path.join(projectDir, '..', 'memory_data', 'system_json');
+    this.initializeStorage();
+  }
+
+  private async initializeStorage(): Promise<void> {
+    try {
+      await fs.mkdir(this.systemJsonPath, { recursive: true });
+    } catch (error) {
+      console.error('Failed to initialize system JSON storage:', error);
+    }
+  }
+
+  async createSystemJSON(
+    name: string,
+    domain: string,
+    description: string,
+    data: Record<string, unknown>,
+    tags: string[] = []
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      // Validate name (alphanumeric, underscore, hyphen only)
+      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        return { success: false, message: 'Name must contain only letters, numbers, underscores, and hyphens' };
+      }
+
+      const fileName = `${name}.json`;
+      const filePath = path.join(this.systemJsonPath, fileName);
+
+      // Check if file already exists
+      try {
+        await fs.access(filePath);
+        return { success: false, message: `System JSON "${name}" already exists` };
+      } catch {
+        // File doesn't exist, which is what we want
+      }
+
+      // Create searchable content from data
+      const searchable_content = this.createSearchableContent(data, description, tags);
+
+      const systemData: SystemJSONData = {
+        name,
+        domain,
+        description,
+        data,
+        searchable_content,
+        tags,
+        created: Date.now(),
+        modified: Date.now()
+      };
+
+      // Atomic write
+      const tempPath = path.join(this.systemJsonPath, `${fileName}.tmp`);
+      const jsonContent = JSON.stringify(systemData, null, 2);
+      await fs.writeFile(tempPath, jsonContent, 'utf-8');
+
+      // Validate JSON before committing
+      try {
+        JSON.parse(jsonContent);
+        await fs.rename(tempPath, filePath);
+      } catch (parseError) {
+        await fs.unlink(tempPath).catch(() => {});
+        throw new Error(`JSON validation failed: ${parseError}`);
+      }
+
+      return { success: true, message: `Created system JSON: ${name}` };
+    } catch (error) {
+      return { success: false, message: `Failed to create system JSON: ${error}` };
+    }
+  }
+
+  async getSystemJSON(name: string): Promise<{ success: boolean; data?: SystemJSONData; message: string }> {
+    try {
+      const fileName = `${name}.json`;
+      const filePath = path.join(this.systemJsonPath, fileName);
+
+      const jsonContent = await fs.readFile(filePath, 'utf-8');
+      const data = JSON.parse(jsonContent) as SystemJSONData;
+
+      return { success: true, data, message: `Retrieved system JSON: ${name}` };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { success: false, message: `System JSON "${name}" not found` };
+      }
+      return { success: false, message: `Failed to retrieve system JSON: ${error}` };
+    }
+  }
+
+  async searchSystemJSON(query: string): Promise<{ results: Array<{ name: string; score: number; data: SystemJSONData }> }> {
+    try {
+      const files = await fs.readdir(this.systemJsonPath);
+      const results: Array<{ name: string; score: number; data: SystemJSONData }> = [];
+
+      for (const file of files) {
+        if (file.endsWith('.json') && !file.endsWith('.tmp')) {
+          try {
+            const filePath = path.join(this.systemJsonPath, file);
+            const jsonContent = await fs.readFile(filePath, 'utf-8');
+            const data = JSON.parse(jsonContent) as SystemJSONData;
+
+            const score = this.calculateSearchScore(query, data);
+            if (score > 0.1) {
+              results.push({ name: data.name, score, data });
+            }
+          } catch (error) {
+            // Skip corrupted files
+            console.error(`Skipping corrupted system JSON file: ${file}`, error);
+          }
+        }
+      }
+
+      return { results: results.sort((a, b) => b.score - a.score) };
+    } catch (error) {
+      console.error('Failed to search system JSON:', error);
+      return { results: [] };
+    }
+  }
+
+  async listSystemJSON(): Promise<{ files: Array<{ name: string; domain: string; description: string }> }> {
+    try {
+      const files = await fs.readdir(this.systemJsonPath);
+      const systemFiles = [];
+
+      for (const file of files) {
+        if (file.endsWith('.json') && !file.endsWith('.tmp')) {
+          try {
+            const filePath = path.join(this.systemJsonPath, file);
+            const jsonContent = await fs.readFile(filePath, 'utf-8');
+            const data = JSON.parse(jsonContent) as SystemJSONData;
+
+            systemFiles.push({
+              name: data.name,
+              domain: data.domain,
+              description: data.description
+            });
+          } catch (error) {
+            // Skip corrupted files
+            console.error(`Skipping corrupted system JSON file: ${file}`, error);
+          }
+        }
+      }
+
+      return { files: systemFiles.sort((a, b) => a.name.localeCompare(b.name)) };
+    } catch (error) {
+      console.error('Failed to list system JSON files:', error);
+      return { files: [] };
+    }
+  }
+
+  private createSearchableContent(data: Record<string, unknown>, description: string, tags: string[]): string {
+    const dataString = JSON.stringify(data, null, 2);
+    return `${description} ${tags.join(' ')} ${dataString}`.toLowerCase();
+  }
+
+  private calculateSearchScore(query: string, data: SystemJSONData): number {
+    const queryWords = query.toLowerCase().split(/\s+/);
+    const contentWords = data.searchable_content.split(/\s+/);
+    const commonWords = queryWords.filter(word => contentWords.includes(word));
+    return commonWords.length / Math.max(queryWords.length, 1);
+  }
+}
+
 // ===== INTEGRATED GRAPH MEMORY WITH PERSISTENCE =====
-// Memory data is stored in: {project}/memory_data/cognitive_memory.json
+// Memory data is stored in: {project}/memory_data/{library_name}.json
 // Automatically saves on node/session creation and loads on startup
 
 class CognitiveMemory {
   private nodes: Map<string, MemoryNode> = new Map();
   private sessions: Map<string, ReasoningContext> = new Map();
   private memoryDataPath: string;
+  private currentLibraryName: string = 'cognitive_memory'; // Default library name
 
   constructor() {
     // Store memory data relative to the project directory, not cwd
@@ -97,32 +279,163 @@ class CognitiveMemory {
       const memoryState = {
         nodes: Array.from(this.nodes.entries()),
         sessions: Array.from(this.sessions.entries()),
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        libraryName: this.currentLibraryName
       };
       
-      const filePath = path.join(this.memoryDataPath, 'cognitive_memory.json');
-      await fs.writeFile(filePath, JSON.stringify(memoryState, null, 2), 'utf-8');
+      const fileName = `${this.currentLibraryName}.json`;
+      const filePath = path.join(this.memoryDataPath, fileName);
+      const tempPath = path.join(this.memoryDataPath, `${fileName}.tmp`);
+      
+      // Atomic write: write to temp file first, then rename
+      const jsonContent = JSON.stringify(memoryState, null, 2);
+      await fs.writeFile(tempPath, jsonContent, 'utf-8');
+      
+      // Validate JSON before committing
+      try {
+        JSON.parse(jsonContent);
+        await fs.rename(tempPath, filePath);
+      } catch (parseError) {
+        await fs.unlink(tempPath).catch(() => {}); // Clean up temp file
+        throw new Error(`JSON validation failed: ${parseError}`);
+      }
     } catch (error) {
       console.error('Failed to save memory to file:', error);
     }
   }
 
-  private async loadFromFile(): Promise<void> {
+  private async loadFromFile(libraryName?: string): Promise<void> {
     try {
-      const filePath = path.join(this.memoryDataPath, 'cognitive_memory.json');
+      const targetLibrary = libraryName || this.currentLibraryName;
+      const fileName = `${targetLibrary}.json`;
+      const filePath = path.join(this.memoryDataPath, fileName);
+      
       const data = await fs.readFile(filePath, 'utf-8');
-      const memoryState = JSON.parse(data);
+      
+      // Validate JSON before parsing
+      let memoryState;
+      try {
+        memoryState = JSON.parse(data);
+      } catch (parseError) {
+        throw new Error(`Invalid JSON in library ${targetLibrary}: ${parseError}`);
+      }
       
       this.nodes = new Map(memoryState.nodes);
       this.sessions = new Map(memoryState.sessions);
+      this.currentLibraryName = targetLibrary;
       
-      console.error(`Loaded ${this.nodes.size} memory nodes and ${this.sessions.size} sessions from persistence`);
+      console.error(`Loaded ${this.nodes.size} memory nodes and ${this.sessions.size} sessions from library: ${targetLibrary}`);
     } catch (error) {
       // File doesn't exist or is corrupted - start with empty memory
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         console.error('Failed to load memory from file:', error);
       }
     }
+  }
+
+  // === LIBRARY MANAGEMENT METHODS ===
+  
+  async createLibrary(libraryName: string): Promise<{ success: boolean; message: string }> {
+    try {
+      // Validate library name (alphanumeric, underscore, hyphen only)
+      if (!/^[a-zA-Z0-9_-]+$/.test(libraryName)) {
+        return { success: false, message: 'Library name must contain only letters, numbers, underscores, and hyphens' };
+      }
+      
+      const fileName = `${libraryName}.json`;
+      const filePath = path.join(this.memoryDataPath, fileName);
+      
+      // Check if library already exists
+      try {
+        await fs.access(filePath);
+        return { success: false, message: `Library "${libraryName}" already exists` };
+      } catch {
+        // Library doesn't exist, which is what we want
+      }
+      
+      // Save current state if we have data
+      if (this.nodes.size > 0 || this.sessions.size > 0) {
+        await this.saveToFile();
+      }
+      
+      // Clear current memory and create new library
+      this.nodes.clear();
+      this.sessions.clear();
+      this.currentLibraryName = libraryName;
+      
+      // Save empty library
+      await this.saveToFile();
+      
+      return { success: true, message: `Created library: ${libraryName}` };
+    } catch (error) {
+      return { success: false, message: `Failed to create library: ${error}` };
+    }
+  }
+  
+  async listLibraries(): Promise<{ libraries: Array<{ name: string; size: number; lastModified: Date }> }> {
+    try {
+      const files = await fs.readdir(this.memoryDataPath);
+      const libraries = [];
+      
+      for (const file of files) {
+        if (file.endsWith('.json') && !file.endsWith('.tmp')) {
+          const filePath = path.join(this.memoryDataPath, file);
+          const stats = await fs.stat(filePath);
+          const libraryName = file.replace('.json', '');
+          
+          // Get library size (node count) by reading the file
+          try {
+            const data = await fs.readFile(filePath, 'utf-8');
+            const memoryState = JSON.parse(data);
+            const nodeCount = memoryState.nodes ? memoryState.nodes.length : 0;
+            
+            libraries.push({
+              name: libraryName,
+              size: nodeCount,
+              lastModified: stats.mtime
+            });
+          } catch (error) {
+            // Skip corrupted files
+            console.error(`Skipping corrupted library file: ${file}`, error);
+          }
+        }
+      }
+      
+      return { libraries: libraries.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime()) };
+    } catch (error) {
+      console.error('Failed to list libraries:', error);
+      return { libraries: [] };
+    }
+  }
+  
+  async switchLibrary(libraryName: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const fileName = `${libraryName}.json`;
+      const filePath = path.join(this.memoryDataPath, fileName);
+      
+      // Check if library exists
+      try {
+        await fs.access(filePath);
+      } catch {
+        return { success: false, message: `Library "${libraryName}" does not exist` };
+      }
+      
+      // Save current state if we have unsaved changes
+      if (this.nodes.size > 0 || this.sessions.size > 0) {
+        await this.saveToFile();
+      }
+      
+      // Load the new library
+      await this.loadFromFile(libraryName);
+      
+      return { success: true, message: `Switched to library: ${libraryName}` };
+    } catch (error) {
+      return { success: false, message: `Failed to switch library: ${error}` };
+    }
+  }
+  
+  getCurrentLibraryName(): string {
+    return this.currentLibraryName;
   }
 
   addNode(content: string, type: MemoryNode['type'], metadata: Record<string, unknown> = {}): string {
@@ -183,7 +496,16 @@ class CognitiveMemory {
     return commonWords.length / Math.max(queryWords.length, contentWords.length);
   }
 
-  createSession(goal: string): string {
+  async createSession(goal: string, libraryName?: string): Promise<string> {
+    // Switch to specified library if provided (now properly awaited)
+    if (libraryName && libraryName !== this.currentLibraryName) {
+      const switchResult = await this.switchLibrary(libraryName);
+      if (!switchResult.success) {
+        console.error(`Failed to switch to library ${libraryName}:`, switchResult.message);
+        // Continue with current library rather than failing
+      }
+    }
+    
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const context: ReasoningContext = {
       sessionId,
@@ -198,9 +520,7 @@ class CognitiveMemory {
     this.sessions.set(sessionId, context);
     
     // Auto-save to persistence
-    this.saveToFile().catch(error => 
-      console.error('Failed to auto-save session:', error)
-    );
+    await this.saveToFile();
     
     return sessionId;
   }
@@ -240,6 +560,7 @@ class AdvancedReasoningServer {
   private thoughtHistory: AdvancedThoughtData[] = [];
   private branches: Record<string, AdvancedThoughtData[]> = {};
   private memory: CognitiveMemory = new CognitiveMemory();
+  private systemJson: SystemJSON = new SystemJSON();
   private disableLogging: boolean;
 
   constructor() {
@@ -438,18 +759,104 @@ class AdvancedReasoningServer {
     }
   }
 
-  public createReasoningSession(goal: string): { content: Array<{ type: string; text: string }>; isError?: boolean } {
+  public async createLibrary(libraryName: string): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
     try {
-      const sessionId = this.memory.createSession(goal);
+      const result = await this.memory.createLibrary(libraryName);
       
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            sessionId,
-            goal,
-            status: 'created',
-            message: 'Reasoning session created successfully'
+            libraryName,
+            success: result.success,
+            message: result.message,
+            currentLibrary: this.memory.getCurrentLibraryName()
+          }, null, 2)
+        }],
+        isError: !result.success
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed'
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
+  }
+
+  public async listLibraries(): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    try {
+      const result = await this.memory.listLibraries();
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            currentLibrary: this.memory.getCurrentLibraryName(),
+            libraries: result.libraries,
+            totalLibraries: result.libraries.length
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed'
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
+  }
+
+  public async switchLibrary(libraryName: string): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    try {
+      const result = await this.memory.switchLibrary(libraryName);
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            libraryName,
+            success: result.success,
+            message: result.message,
+            currentLibrary: this.memory.getCurrentLibraryName(),
+            memoryStats: this.memory.getMemoryStats()
+          }, null, 2)
+        }],
+        isError: !result.success
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed'
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
+  }
+
+  public getCurrentLibraryInfo(): { content: Array<{ type: string; text: string }>; isError?: boolean } {
+    try {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            currentLibrary: this.memory.getCurrentLibraryName(),
+            memoryStats: this.memory.getMemoryStats(),
+            status: 'success'
           }, null, 2)
         }]
       };
@@ -501,8 +908,138 @@ class AdvancedReasoningServer {
       };
     }
   }
-}
 
+  public async createSystemJSON(
+    name: string,
+    domain: string,
+    description: string,
+    data: Record<string, unknown>,
+    tags: string[] = []
+  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    try {
+      const result = await this.systemJson.createSystemJSON(name, domain, description, data, tags);
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            name,
+            domain,
+            description,
+            success: result.success,
+            message: result.message,
+            tags,
+            created: Date.now()
+          }, null, 2)
+        }],
+        isError: !result.success
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed'
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
+  }
+
+  public async getSystemJSON(name: string): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    try {
+      const result = await this.systemJson.getSystemJSON(name);
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            name,
+            success: result.success,
+            message: result.message,
+            data: result.data || null
+          }, null, 2)
+        }],
+        isError: !result.success
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed'
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
+  }
+
+  public async searchSystemJSON(query: string): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    try {
+      const result = await this.systemJson.searchSystemJSON(query);
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            query,
+            results: result.results.map(r => ({
+              name: r.name,
+              score: r.score,
+              domain: r.data.domain,
+              description: r.data.description,
+              tags: r.data.tags
+            })),
+            totalResults: result.results.length
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed'
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
+  }
+
+  public async listSystemJSON(): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    try {
+      const result = await this.systemJson.listSystemJSON();
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            files: result.files,
+            totalFiles: result.files.length,
+            status: 'success'
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            status: 'failed'
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
+  }
+}
 // ===== TOOLS DEFINITION =====
 
 const ADVANCED_REASONING_TOOL: Tool = {
@@ -579,29 +1116,6 @@ Use this tool for complex reasoning that benefits from:
   }
 };
 
-const CREATE_SESSION_TOOL: Tool = {
-  name: "create_reasoning_session",
-  description: `Create a new reasoning session for focused problem-solving with integrated memory tracking.
-
-Sessions provide:
-- Persistent context across multiple reasoning steps
-- Memory integration for building on previous insights
-- Goal tracking and progress monitoring
-- Confidence and quality assessment over time
-
-Parameters:
-- goal: The main objective or problem to solve (required)
-
-Returns a session ID for use in advanced_reasoning calls.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      goal: { type: "string", description: "The main goal or problem to solve" }
-    },
-    required: ["goal"]
-  }
-};
-
 const QUERY_MEMORY_TOOL: Tool = {
   name: "query_reasoning_memory",
   description: `Query the integrated memory system to find related insights, hypotheses, and evidence.
@@ -627,6 +1141,148 @@ Returns related memories with confidence scores and connection information.`,
   }
 };
 
+const CREATE_LIBRARY_TOOL: Tool = {
+  name: "create_memory_library",
+  description: `Create a new named memory library for organized knowledge storage.
+
+Enables you to create separate, named memory libraries for different projects, domains, or contexts.
+Library names must contain only letters, numbers, underscores, and hyphens.
+
+Parameters:
+- library_name: Name for the new library (required)
+
+Returns success status and message.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      library_name: { type: "string", description: "Name for the new memory library" }
+    },
+    required: ["library_name"]
+  }
+};
+
+const LIST_LIBRARIES_TOOL: Tool = {
+  name: "list_memory_libraries",
+  description: `List all available memory libraries with metadata.
+
+Shows all existing memory libraries with information about:
+- Library name
+- Number of memory nodes
+- Last modified date
+
+Returns organized, searchable library information.`,
+  inputSchema: {
+    type: "object",
+    properties: {},
+    required: []
+  }
+};
+
+const SWITCH_LIBRARY_TOOL: Tool = {
+  name: "switch_memory_library",
+  description: `Switch to a different memory library.
+
+Allows you to switch between different memory libraries for different contexts or projects.
+Current session state is saved before switching.
+
+Parameters:
+- library_name: Name of the library to switch to (required)
+
+Returns success status and message.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      library_name: { type: "string", description: "Name of the library to switch to" }
+    },
+    required: ["library_name"]
+  }
+};
+
+const GET_LIBRARY_INFO_TOOL: Tool = {
+  name: "get_current_library_info",
+  description: `Get information about the currently active memory library.
+
+Shows current library name, number of nodes, sessions, and other metadata.
+
+Returns current library information.`,
+  inputSchema: {
+    type: "object",
+    properties: {},
+    required: []
+  }
+};
+
+const CREATE_SYSTEM_JSON_TOOL: Tool = {
+  name: "create_system_json",
+  description: `Create a new system JSON file for storing coherent detailed searchable data or instructions and workflows for any domain or action.
+
+Parameters:
+- name: Name for the system JSON file (required) - alphanumeric, underscore, hyphen only
+- domain: Domain or category for the data (required)
+- description: Description of what this system JSON contains (required)
+- data: The structured data to store (required) - can be any JSON-serializable object
+- tags: Optional array of tags for searchability
+
+Returns success status and confirmation message.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "Name for the system JSON file (alphanumeric, underscore, hyphen only)" },
+      domain: { type: "string", description: "Domain or category for the data" },
+      description: { type: "string", description: "Description of what this system JSON contains" },
+      data: { type: "object", description: "The structured data to store" },
+      tags: { type: "array", items: { type: "string" }, description: "Optional array of tags for searchability" }
+    },
+    required: ["name", "domain", "description", "data"]
+  }
+};
+
+const GET_SYSTEM_JSON_TOOL: Tool = {
+  name: "get_system_json",
+  description: `Retrieve a system JSON file by name.
+
+Parameters:
+- name: Name of the system JSON file to retrieve (required)
+
+Returns the complete system JSON data including metadata and content.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "Name of the system JSON file to retrieve" }
+    },
+    required: ["name"]
+  }
+};
+
+const SEARCH_SYSTEM_JSON_TOOL: Tool = {
+  name: "search_system_json",
+  description: `Search through system JSON files by query.
+
+Parameters:
+- query: Search query to find matching system JSON files (required)
+
+Returns matching files with relevance scores.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Search query to find matching system JSON files" }
+    },
+    required: ["query"]
+  }
+};
+
+const LIST_SYSTEM_JSON_TOOL: Tool = {
+  name: "list_system_json",
+  description: `List all available system JSON files.
+
+Returns list of all system JSON files with their names, domains, and descriptions.`,
+  inputSchema: {
+    type: "object",
+    properties: {},
+    required: []
+  }
+};
+
 // ===== SERVER SETUP =====
 
 const server = new Server(
@@ -644,7 +1300,18 @@ const server = new Server(
 const reasoningServer = new AdvancedReasoningServer();
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [ADVANCED_REASONING_TOOL, CREATE_SESSION_TOOL, QUERY_MEMORY_TOOL],
+  tools: [
+    ADVANCED_REASONING_TOOL, 
+    QUERY_MEMORY_TOOL,
+    CREATE_LIBRARY_TOOL,
+    LIST_LIBRARIES_TOOL,
+    SWITCH_LIBRARY_TOOL,
+    GET_LIBRARY_INFO_TOOL,
+    CREATE_SYSTEM_JSON_TOOL,
+    GET_SYSTEM_JSON_TOOL,
+    SEARCH_SYSTEM_JSON_TOOL,
+    LIST_SYSTEM_JSON_TOOL
+  ],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -654,12 +1321,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "advanced_reasoning":
       return reasoningServer.processAdvancedThought(args);
     
-    case "create_reasoning_session":
-      return reasoningServer.createReasoningSession((args as { goal: string }).goal);
-    
     case "query_reasoning_memory":
       const { session_id, query } = args as { session_id: string; query: string };
       return reasoningServer.queryMemory(session_id, query);
+    
+    case "create_memory_library":
+      const { library_name: createLibName } = args as { library_name: string };
+      return await reasoningServer.createLibrary(createLibName);
+    
+    case "list_memory_libraries":
+      return await reasoningServer.listLibraries();
+    
+    case "switch_memory_library":
+      const { library_name: switchLibName } = args as { library_name: string };
+      return await reasoningServer.switchLibrary(switchLibName);
+    
+    case "get_current_library_info":
+      return reasoningServer.getCurrentLibraryInfo();
+    
+    case "create_system_json":
+      const { name: sysJsonName, domain, description, data, tags } = args as { 
+        name: string; 
+        domain: string; 
+        description: string; 
+        data: Record<string, unknown>; 
+        tags?: string[] 
+      };
+      return await reasoningServer.createSystemJSON(sysJsonName, domain, description, data, tags);
+    
+    case "get_system_json":
+      const { name: getSysJsonName } = args as { name: string };
+      return await reasoningServer.getSystemJSON(getSysJsonName);
+    
+    case "search_system_json":
+      const { query: searchQuery } = args as { query: string };
+      return await reasoningServer.searchSystemJSON(searchQuery);
+    
+    case "list_system_json":
+      return await reasoningServer.listSystemJSON();
     
     default:
       return {
