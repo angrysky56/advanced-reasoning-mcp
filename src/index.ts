@@ -10,6 +10,11 @@ import {
 import chalk from 'chalk';
 import { promises as fs } from 'fs';
 import path from 'path';
+import {
+  LangChainTools,
+  LIST_LANGCHAIN_MODELS_TOOL,
+  GENERATE_LANGCHAIN_TEXT_TOOL,
+} from "./langchain-tools.js";
 
 // ===== TYPES =====
 
@@ -1299,6 +1304,8 @@ const server = new Server(
 
 const reasoningServer = new AdvancedReasoningServer();
 
+const langChainTools = new LangChainTools();
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     ADVANCED_REASONING_TOOL, 
@@ -1310,7 +1317,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     CREATE_SYSTEM_JSON_TOOL,
     GET_SYSTEM_JSON_TOOL,
     SEARCH_SYSTEM_JSON_TOOL,
-    LIST_SYSTEM_JSON_TOOL
+    LIST_SYSTEM_JSON_TOOL,
+    LIST_LANGCHAIN_MODELS_TOOL,
+    GENERATE_LANGCHAIN_TEXT_TOOL,
   ],
 }));
 
@@ -1360,6 +1369,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "list_system_json":
       return await reasoningServer.listSystemJSON();
     
+    case "list_langchain_models":
+      const { provider: listProvider } = args as { provider: string };
+      const models = await langChainTools.listModels(listProvider);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(models, null, 2),
+        }],
+      };
+
+    case "generate_langchain_text":
+      const { provider: genProvider, modelName, prompt, systemMessage, apiKey } = args as {
+        provider: string;
+        modelName: string;
+        prompt: string;
+        systemMessage?: string;
+        apiKey?: string;
+      };
+      const text = await langChainTools.generateText(
+        genProvider,
+        modelName,
+        prompt,
+        systemMessage,
+        apiKey
+      );
+      return {
+        content: [{
+          type: "text",
+          text,
+        }],
+      };
+
     default:
       return {
         content: [{
