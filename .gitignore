@@ -6,7 +6,7 @@ build/
 dist/
 
 # Memory data (local runtime storage)
-# memory_data/
+memory_data/
 
 # Logs
 logs/
