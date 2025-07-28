@@ -19,6 +19,10 @@
     <div class="input-container">
         <label for="api-key">API Key:</label>
         <input type="text" id="api-key" placeholder="Enter your API key">
+        <label for="provider-select">Provider:</label>
+        <select id="provider-select"></select>
+        <label for="model-select">Model:</label>
+        <select id="model-select"></select>
         <button id="run-button">Run Comparison</button>
     </div>
     <div class="examples-container">
@@ -39,7 +43,7 @@
             <button class="run-example" data-example="3">Run</button>
         </div>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/langchain@0.0.109/dist/langchain.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/langchain@0.1.28/dist/langchain.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

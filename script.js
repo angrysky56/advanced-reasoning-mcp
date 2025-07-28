@@ -2,6 +2,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const sequentialOutput = document.getElementById('sequential-output');
     const advancedOutput = document.getElementById('advanced-output');
     const apiKeyInput = document.getElementById('api-key');
+    const providerSelect = document.getElementById('provider-select');
+    const modelSelect = document.getElementById('model-select');
     const runButton = document.getElementById('run-button');
     const runExampleButtons = document.querySelectorAll('.run-example');
 
@@ -11,10 +13,28 @@ document.addEventListener('DOMContentLoaded', () => {
         '3': 'A patient has a fever, a cough, and a headache. What are the possible diagnoses, and how would you test for them?'
     };
 
+    providerSelect.addEventListener('change', async () => {
+        const provider = providerSelect.value;
+        const models = await getModels(provider);
+        modelSelect.innerHTML = '';
+        models.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model;
+            modelSelect.appendChild(option);
+        });
+    });
+
     runButton.addEventListener('click', () => {
         const apiKey = apiKeyInput.value;
+        const provider = providerSelect.value;
+        const model = modelSelect.value;
         if (!apiKey) {
             alert('Please enter an API key.');
+            return;
+        }
+        if (!provider || !model) {
+            alert('Please select a provider and model.');
             return;
         }
         // This is a placeholder for the actual logic to run the comparison.
@@ -37,11 +57,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    async function runComparison(apiKey, prompt) {
+    async function runComparison(apiKey, provider, model, prompt) {
         sequentialOutput.value = 'Running sequential thinking...';
         advancedOutput.value = 'Running advanced reasoning...';
 
-        const sequentialPromise = runSequential(apiKey, prompt);
+        const sequentialPromise = runSequential(apiKey, provider, model, prompt);
         const advancedPromise = runAdvanced(apiKey, prompt);
 
         const [sequentialResult, advancedResult] = await Promise.all([sequentialPromise, advancedPromise]);
@@ -50,9 +70,9 @@ document.addEventListener('DOMContentLoaded', () => {
         advancedOutput.value = advancedResult;
     }
 
-    async function runSequential(apiKey, prompt) {
+    async function runSequential(apiKey, provider, model, prompt) {
         const sequentialChain = new langchain.chains.LLMChain({
-            llm: new langchain.llms.OpenAI({ openAIApiKey: apiKey }),
+            llm: new langchain.llms[provider]({ openAIApiKey: apiKey, modelName: model }),
             prompt: new langchain.prompts.PromptTemplate({
                 template: "Q: {question}\nA:",
                 inputVariables: ["question"],
@@ -67,18 +87,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function runAdvanced(apiKey, prompt) {
-        const advancedChain = new langchain.chains.LLMChain({
-            llm: new langchain.llms.OpenAI({ openAIApiKey: apiKey }),
-            prompt: new langchain.prompts.PromptTemplate({
-                template: "Q: {question}\nA: Let's think step by step.",
-                inputVariables: ["question"],
+        const response = await fetch('/advanced-reasoning', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                apiKey,
+                prompt,
             }),
         });
 
-        const result = await advancedChain.call({
-            question: prompt,
-        });
+        if (!response.ok) {
+            const error = await response.json();
+            return `Error: ${error.message}`;
+        }
 
-        return result.text;
+        const result = await response.json();
+        return result.content[0].text;
     }
+
+    async function getProviders() {
+        const response = await fetch('/providers');
+        const providers = await response.json();
+        return providers;
+    }
+
+    async function getModels(provider) {
+        const response = await fetch(`/models?provider=${provider}`);
+        const models = await response.json();
+        return models;
+    }
+
+    async function init() {
+        const providers = await getProviders();
+        providers.forEach(provider => {
+            const option = document.createElement('option');
+            option.value = provider;
+            option.textContent = provider;
+            providerSelect.appendChild(option);
+        });
+        providerSelect.dispatchEvent(new Event('change'));
+    }
+
+    init();
 });

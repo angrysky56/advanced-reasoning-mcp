@@ -82,7 +82,21 @@ export class LangChainTools {
     }
     // This is a placeholder. In a real implementation, you would need to
     // query the provider's API to get a list of available models.
-    return Promise.resolve(["Model 1", "Model 2", "Model 3"]);
+    switch (provider) {
+      case "openai":
+        return Promise.resolve(["gpt-3.5-turbo", "gpt-4", "gpt-4-32k"]);
+      case "anthropic":
+        return Promise.resolve(["claude-2", "claude-instant-1"]);
+      case "google":
+        return Promise.resolve(["gemini-pro", "gemini-ultra"]);
+      default:
+        return Promise.resolve([]);
+    }
+  }
+
+  // A function to get the available providers
+  async getProviders(): Promise<string[]> {
+    return Promise.resolve(Object.keys(modelProviders));
   }
 
   // A function to generate text using a specified model

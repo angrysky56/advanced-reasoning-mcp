@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import chalk from 'chalk';
 import { promises as fs } from 'fs';
+import http from 'http';
 import path from 'path';
 import {
   LangChainTools,
@@ -1416,6 +1417,54 @@ async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Advanced Reasoning MCP Server running on stdio");
+
+  const httpServer = http.createServer(async (req, res) => {
+    if (req.url === '/advanced-reasoning' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      req.on('end', async () => {
+        try {
+          const { apiKey, prompt } = JSON.parse(body);
+          const result = await reasoningServer.processAdvancedThought({
+            thought: prompt,
+            thoughtNumber: 1,
+            totalThoughts: 1,
+            nextThoughtNeeded: false,
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ message: (error as Error).message }));
+        }
+      });
+    } else if (req.url === '/providers' && req.method === 'GET') {
+      const providers = await langChainTools.getProviders();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(providers));
+    } else if (req.url && req.url.startsWith('/models') && req.method === 'GET') {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const provider = url.searchParams.get('provider');
+      if (provider) {
+        const models = await langChainTools.listModels(provider);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(models));
+      } else {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'Provider not specified' }));
+      }
+    } else {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not Found');
+    }
+  });
+
+  const port = process.env.PORT || 3000;
+  httpServer.listen(port, () => {
+    console.error(`HTTP server listening on port ${port}`);
+  });
 }
 
 runServer().catch((error) => {
