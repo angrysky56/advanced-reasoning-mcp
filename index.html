@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sequential Thinking vs. Advanced Reasoning</title>
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+    <h1>Sequential Thinking vs. Advanced Reasoning</h1>
+    <div class="container">
+        <div class="model-container">
+            <h2>Sequential Thinking</h2>
+            <textarea id="sequential-output" readonly></textarea>
+        </div>
+        <div class="model-container">
+            <h2>Advanced Reasoning</h2>
+            <textarea id="advanced-output" readonly></textarea>
+        </div>
+    </div>
+    <div class="input-container">
+        <label for="api-key">API Key:</label>
+        <input type="text" id="api-key" placeholder="Enter your API key">
+        <label for="provider-select">Provider:</label>
+        <select id="provider-select"></select>
+        <label for="model-select">Model:</label>
+        <select id="model-select"></select>
+        <button id="run-button">Run Comparison</button>
+    </div>
+    <div class="examples-container">
+        <h2>Examples</h2>
+        <div class="example">
+            <h3>Example 1: Simple Question</h3>
+            <p>What is the capital of France?</p>
+            <button class="run-example" data-example="1">Run</button>
+        </div>
+        <div class="example">
+            <h3>Example 2: Multi-step Reasoning</h3>
+            <p>If a train leaves New York at 2:00 PM and travels at 100 mph, and a second train leaves Los Angeles at 4:00 PM and travels at 120 mph, when will they meet?</p>
+            <button class="run-example" data-example="2">Run</button>
+        </div>
+        <div class="example">
+            <h3>Example 3: Hypothesis Testing (Advanced)</h3>
+            <p>A patient has a fever, a cough, and a headache. What are the possible diagnoses, and how would you test for them?</p>
+            <button class="run-example" data-example="3">Run</button>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/langchain@0.1.28/dist/langchain.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
