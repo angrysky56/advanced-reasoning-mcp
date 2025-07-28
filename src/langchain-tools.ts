@@ -1,4 +1,3 @@
-import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   BaseLanguageModel,
   BaseLanguageModelInput,
@@ -8,25 +7,8 @@ import {
   HumanMessage,
   SystemMessage,
 } from "@langchain/core/messages";
-
-// A mapping of provider names to their model implementations
-const modelProviders: Record<string, new (options: any) => BaseLanguageModel> = {};
-
-// A function to dynamically import and register providers
-async function registerProvider(providerName: string, moduleName: string, modelClassName: string) {
-  try {
-    const module = await import(`@langchain/community/chat_models/${moduleName}`);
-    modelProviders[providerName] = module[modelClassName];
-    console.log(`Successfully registered provider: ${providerName}`);
-  } catch (error) {
-    console.error(`Failed to register provider: ${providerName}`, error);
-  }
-}
-
-// Register some default providers
-registerProvider("anthropic", "anthropic", "ChatAnthropic");
-registerProvider("openai", "openai", "ChatOpenAI");
-registerProvider("google", "google", "ChatGoogleGenerativeAI");
+import { modelInfo } from "./model-info.js";
+import { Tool } from "./mcp.js";
 
 export const LIST_LANGCHAIN_MODELS_TOOL: Tool = {
   name: "list_langchain_models",
@@ -75,28 +57,35 @@ export const GENERATE_LANGCHAIN_TEXT_TOOL: Tool = {
 };
 
 export class LangChainTools {
+  private modelProviders: Record<string, new (options: any) => BaseLanguageModel> = {};
+
+  constructor() {
+    this.registerProvider("anthropic", "anthropic", "ChatAnthropic");
+    this.registerProvider("openai", "openai", "ChatOpenAI");
+    this.registerProvider("google", "google", "ChatGoogleGenerativeAI");
+  }
+
+  private async registerProvider(providerName: string, moduleName: string, modelClassName: string) {
+    try {
+      const module = await import(`@langchain/community/chat_models/${moduleName}`);
+      this.modelProviders[providerName] = module[modelClassName];
+      console.log(`Successfully registered provider: ${providerName}`);
+    } catch (error) {
+      console.error(`Failed to register provider: ${providerName}`, error);
+    }
+  }
+
   // A function to get the available models for a provider
   async listModels(provider: string): Promise<string[]> {
-    if (!modelProviders[provider]) {
+    if (!this.modelProviders[provider]) {
       throw new Error(`Provider '${provider}' is not supported.`);
     }
-    // This is a placeholder. In a real implementation, you would need to
-    // query the provider's API to get a list of available models.
-    switch (provider) {
-      case "openai":
-        return Promise.resolve(["gpt-3.5-turbo", "gpt-4", "gpt-4-32k"]);
-      case "anthropic":
-        return Promise.resolve(["claude-2", "claude-instant-1"]);
-      case "google":
-        return Promise.resolve(["gemini-pro", "gemini-ultra"]);
-      default:
-        return Promise.resolve([]);
-    }
+    return Promise.resolve(modelInfo[provider] || []);
   }
 
   // A function to get the available providers
   async getProviders(): Promise<string[]> {
-    return Promise.resolve(Object.keys(modelProviders));
+    return Promise.resolve(Object.keys(this.modelProviders));
   }
 
   // A function to generate text using a specified model
@@ -107,11 +96,11 @@ export class LangChainTools {
     systemMessage?: string,
     apiKey?: string
   ): Promise<string> {
-    if (!modelProviders[provider]) {
+    if (!this.modelProviders[provider]) {
       throw new Error(`Provider '${provider}' is not supported.`);
     }
 
-    const modelClass = modelProviders[provider];
+    const modelClass = this.modelProviders[provider];
     const model = new modelClass({ modelName, apiKey });
 
     const messages = [];

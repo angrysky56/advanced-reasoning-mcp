@@ -1,290 +1,95 @@
 # Advanced Reasoning MCP Server
 
-An elegant, self-contained MCP server that builds on the sequential thinking pattern with advanced cognitive capabilities including meta-reasoning, hypothesis testing, integrated memory libraries, and structured data storage.
+This project implements an advanced cognitive reasoning server based on the Model Context Protocol (MCP). It features meta-cognition, hypothesis testing, and an integrated memory system, providing a robust platform for developing and testing sophisticated AI reasoning agents.
 
-## 🧠 Features
+## Features
 
-- **Meta-Cognitive Assessment**: Confidence tracking and reasoning quality evaluation
-- **Hypothesis Testing**: Systematic formulation, testing, and validation of hypotheses
-- **Integrated Memory Libraries**: Graph-based memory with named library management for different contexts
-- **SystemJSON Storage**: Structured data storage for workflows, instructions, and domain-specific knowledge
-- **Enhanced Visualization**: Rich console output with confidence bars and quality indicators
+- **MCP Compliant**: Implements the Model Context Protocol for standardized communication with AI models and tools.
+- **Advanced Reasoning Tools**: Includes tools for complex cognitive tasks such as hypothesis testing, evidence management, and confidence scoring.
+- **Integrated Cognitive Memory**: A graph-based memory system that persists across sessions, allowing for long-term learning and context retention.
+- **Session Management**: Supports multiple reasoning sessions, each with its own context and goals.
+- **System JSON Storage**: A document-based storage system for structured data, workflows, and instructions.
+- **LangChain Integration**: Provides tools for interacting with LangChain models and providers.
+- **Multiple Transports**: Supports `stdio`, `HTTP/REST`, and `WebSocket` transports for flexible connectivity.
 
-## 🚀 Quick Start
+## Getting Started
+
+### Prerequisites
+
+- Node.js (v20.0.0 or higher)
+- npm
 
 ### Installation
 
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/your-username/advanced-reasoning-mcp.git
+   ```
+2. Install the dependencies:
+   ```bash
+   cd advanced-reasoning-mcp
+   npm install
+   ```
+
+### Building the Server
+
+To build the server, run the following command:
+
 ```bash
-cd /home/ty/Repositories/ai_workspace/advanced-reasoning-mcp
-npm install
 npm run build
 ```
 
-### Usage
+### Running the Server
 
-### MCP Client Integration
+To run the server, use the following command:
 
-Add to your MCP client configuration:
-```json
-{
-  "mcpServers": {
-    "advanced-reasoning": {
-      "command": "node",
-      "args": ["/path-to/advanced-reasoning-mcp/build/index.js"]
-    }
-  }
-}
+```bash
+npm start
 ```
 
-## 🔧 Tools
+The server will start and listen for connections on `stdio`, `HTTP/REST` (port 3000), and `WebSockets` (port 3000).
 
-### Core Reasoning
+## Usage
 
-#### `advanced_reasoning`
-Enhanced reasoning with cognitive features:
-- All sequential thinking capabilities (branching, revisions, dynamic thought counts)
-- **Confidence tracking** (0.0-1.0)
-- **Reasoning quality assessment** (low/medium/high)
-- **Meta-cognitive reflection**
-- **Hypothesis formulation and testing**
-- **Evidence tracking and validation**
-- **Memory integration** with session context
+The server exposes a set of tools that can be called through the MCP interface. These tools provide access to the server's advanced reasoning capabilities, memory system, and LangChain integration.
 
-#### `query_reasoning_memory`
-Search integrated memory:
-- Find related insights and hypotheses
-- Discover connections between ideas
-- Build on previous reasoning sessions
-- Context-aware memory retrieval
+### MCP Interface
 
-### Memory Library Management
+The server implements the MCP protocol and can be accessed via `stdio`, `HTTP/REST`, and `WebSockets`. The HTTP/REST endpoint for MCP is `/mcp`.
 
-#### `create_memory_library`
-Create named memory libraries for organized knowledge:
-- Separate libraries for different projects/domains
-- Clean architectural separation
-- Library name validation
+### Tools
 
-#### `list_memory_libraries`
-List all available memory libraries:
-- Shows library metadata (name, size, last modified)
-- Organized, searchable library information
+- `list_tools`: Lists all available tools.
+- `call_tool`: Calls a tool with the specified arguments.
 
-#### `switch_memory_library`
-Switch between different memory libraries:
-- Maintains session state during switches
-- Context-aware library management
+### Available Tools
 
-#### `get_current_library_info`
-Get information about currently active library:
-- Current library name and statistics
-- Node count and session information
+- `advanced_reasoning`: Performs a step in a reasoning process, with support for meta-cognition, hypothesis testing, and evidence tracking.
+- `query_reasoning_memory`: Queries the cognitive memory for relevant information.
+- `create_memory_library`: Creates a new memory library.
+- `list_memory_libraries`: Lists all available memory libraries.
+- `switch_memory_library`: Switches to a different memory library.
+- `get_current_library_info`: Gets information about the current memory library.
+- `create_system_json`: Creates a new system JSON document.
+- `get_system_json`: Retrieves a system JSON document.
+- `search_system_json`: Searches for system JSON documents.
+- `list_system_json`: Lists all available system JSON documents.
+- `create_session`: Creates a new reasoning session.
+- `list_langchain_models`: Lists the available LangChain models for a given provider.
+- `generate_langchain_text`: Generates text using a LangChain model.
 
-### SystemJSON Structured Storage
+### API Endpoints
 
-#### `create_system_json`
-Create structured data storage for workflows and instructions:
-- Domain categorization
-- Searchable content with tags
-- JSON-serializable data storage
-- Atomic write operations with validation
+- `POST /mcp`: The MCP endpoint for sending JSON-RPC requests.
+- `POST /advanced-reasoning`: Executes an advanced reasoning thought.
+- `GET /providers`: Retrieves a list of available LangChain providers.
+- `GET /models?provider=<provider>`: Retrieves a list of available models for a given provider.
+- `POST /session`: Creates a new reasoning session.
 
-#### `get_system_json`
-Retrieve structured data by name:
-- Complete data retrieval with metadata
-- Timestamp and modification tracking
+## Contributing
 
-#### `search_system_json`
-Search through structured data:
-- Relevance scoring and ranking
-- Multi-field search capability
+Contributions are welcome! Please feel free to submit a pull request or open an issue.
 
-#### `list_system_json`
-List all available structured data files:
-- Organized by domain and description
-- Complete metadata overview
+## License
 
-## 📝 Example Usage
-
-### Basic Advanced Reasoning
-```typescript
-// Create a new memory library for this project
-const library = await callTool("create_memory_library", {
-  library_name: "database_optimization"
-});
-
-// Advanced reasoning with meta-cognition (no session creation needed)
-const result = await callTool("advanced_reasoning", {
-  thought: "I need to analyze the query execution plan first",
-  thoughtNumber: 1,
-  totalThoughts: 5,
-  nextThoughtNeeded: true,
-  confidence: 0.8,
-  reasoning_quality: "high",
-  meta_thought: "This is a logical first step, high confidence approach",
-  goal: "Optimize database query performance"
-});
-```
-
-### Hypothesis Testing
-```typescript
-const result = await callTool("advanced_reasoning", {
-  thought: "The bottleneck appears to be in the JOIN operations",
-  thoughtNumber: 2,
-  totalThoughts: 5,
-  nextThoughtNeeded: true,
-  confidence: 0.6,
-  reasoning_quality: "medium",
-  meta_thought: "Need to verify this with actual data",
-  hypothesis: "JOIN operations are causing 80% of query time",
-  test_plan: "Run EXPLAIN ANALYZE and check execution times"
-});
-```
-
-### Memory Integration
-```typescript
-// Query related memories (no session_id needed)
-const memories = await callTool("query_reasoning_memory", {
-  query: "database optimization techniques"
-});
-```
-
-### SystemJSON Usage
-```typescript
-// Store a workflow for reuse
-const workflow = await callTool("create_system_json", {
-  name: "api_testing_workflow",
-  domain: "software_development",
-  description: "Complete API testing methodology",
-  data: {
-    phases: ["setup", "unit_tests", "integration_tests", "performance_tests"],
-    tools: ["jest", "supertest", "newman"],
-    checklist: ["auth validation", "error handling", "rate limiting"]
-  },
-  tags: ["testing", "api", "workflow"]
-});
-
-// Retrieve the workflow later
-const storedWorkflow = await callTool("get_system_json", {
-  name: "api_testing_workflow"
-});
-```
-
-## 🏗️ Architecture
-
-Built on proven sequential thinking with dual storage systems:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    MCP Interface                            │
-├─────────────────────────────────────────────────────────────┤
-│                Advanced Reasoning Server                    │
-│                                                             │
-│  ┌──────────────────┐              ┌──────────────────┐     │
-│  │   CognitiveMemory │              │    SystemJSON    │     │
-│  │   (Graph-Based)   │              │ (Document-Based) │     │
-│  │                  │              │                  │     │
-│  │ • Named Libraries │              │ • Domain-Indexed │     │
-│  │ • Session Context │              │ • Searchable     │     │
-│  │ • Node Relations  │              │ • Tagged Content │     │
-│  │ • Hypothesis      │              │ • Workflows      │     │
-│  │   Tracking        │              │ • Instructions   │     │
-│  └──────────────────┘              └──────────────────┘     │
-│           │                                  │               │
-│  ┌──────────────────┐              ┌──────────────────┐     │
-│  │  Meta-Cognitive  │              │   Enhanced       │     │
-│  │   Assessment     │              │  Sequential      │     │
-│  │                  │              │   Thinking       │     │
-│  │ • Confidence     │              │                  │     │
-│  │ • Quality Rating │              │ • Branching      │     │
-│  │ • Evidence       │              │ • Revisions      │     │
-│  │ • Hypothesis     │              │ • Dynamic Counts │     │
-│  │   Testing        │              │ • Meta-Thoughts  │     │
-│  └──────────────────┘              └──────────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## 🎯 Advanced Features
-
-### Meta-Cognitive Assessment
-- **Confidence Tracking**: Self-assessment of reasoning certainty (0.0-1.0)
-- **Quality Evaluation**: Low/medium/high reasoning quality indicators
-- **Meta-Thoughts**: Reflection on the reasoning process itself
-- **Evidence Integration**: Systematic collection and validation
-
-### Hypothesis Testing Framework
-- **Hypothesis Formulation**: Explicit statement of working theories
-- **Test Planning**: Define validation/refutation strategies
-- **Evidence Tracking**: Collect supporting/contradicting evidence
-- **Result Integration**: Incorporate test outcomes into reasoning
-
-### Dual Storage Architecture
-
-#### CognitiveMemory (Graph-Based)
-- **Named Libraries**: Separate contexts for different projects
-- **Graph Storage**: Connected thoughts, hypotheses, evidence
-- **Session Management**: Persistent reasoning contexts
-- **Memory Queries**: Find relevant insights across sessions
-- **Storage**: `memory_data/{library_name}.json`
-
-#### SystemJSON (Document-Based)
-- **Structured Storage**: JSON-serializable workflows and instructions
-- **Domain Organization**: Categorized by domain/purpose
-- **Search & Discovery**: Full-text search with relevance scoring
-- **Tag System**: Flexible content organization
-- **Storage**: `memory_data/system_json/{name}.json`
-
-### Enhanced Visualization
-- **Confidence Bars**: Visual certainty representation
-- **Quality Indicators**: Color-coded reasoning assessment
-- **Rich Formatting**: Clear structure for complex reasoning
-- **Meta-Information**: Display confidence, quality, connections
-
-## 🔄 Compatibility
-
-Fully compatible with sequential thinking patterns:
-- All branching and revision capabilities preserved
-- Dynamic thought count adjustment supported
-- Familiar parameter structure with optional enhancements
-- Backward compatible with existing sequential thinking workflows
-
-## 📊 Benefits Over Sequential Thinking
-
-- **Self-Awareness**: Track confidence and reasoning quality
-- **Systematic Validation**: Explicit hypothesis testing framework
-- **Organized Memory**: Named libraries for different contexts
-- **Structured Storage**: Workflows and instructions as searchable data
-- **Enhanced Clarity**: Rich visualization of reasoning process
-- **Progress Tracking**: Monitor advancement toward defined goals
-- **Evidence-Based**: Systematic collection and evaluation of evidence
-
-## 🗂️ File Structure
-
-```
-memory_data/
-├── cognitive_memory.json      # Default reasoning library
-├── {library_name}.json        # Named reasoning libraries
-└── system_json/              # Structured data storage
-    ├── {workflow_name}.json  # Workflow definitions
-    ├── {instruction_set}.json # Instruction sets
-    └── {domain_data}.json    # Domain-specific data
-```
-
-## 📚 Use Cases
-
-### Memory Libraries
-- **Project-specific reasoning**: Separate libraries per project
-- **Domain expertise**: Different libraries for different knowledge domains
-- **Context switching**: Clean separation between reasoning contexts
-
-### SystemJSON Storage
-- **Workflow documentation**: Store reusable process definitions
-- **Instruction sets**: Step-by-step procedures and guidelines
-- **Domain knowledge**: Structured information for specific fields
-- **Configuration data**: Settings and parameters for different scenarios
-
-This server transforms sequential thinking into a sophisticated dual-storage cognitive reasoning system, providing both graph-based memory for reasoning sessions and structured document storage for workflows and instructions, while maintaining the elegant simplicity that made the original sequential thinking pattern so effective.
-
-Made by angrysky56 (Ty Hall) and Claude
-
-License- MIT
+This project is licensed under the MIT License. See the `LICENSE` file for details.
