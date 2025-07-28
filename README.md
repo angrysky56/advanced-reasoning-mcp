@@ -15,7 +15,7 @@ An elegant, self-contained MCP server that builds on the sequential thinking pat
 ### Installation
 
 ```bash
-cd /home/ty/Repositories/ai_workspace/advanced-reasoning-mcp
+cd /advanced-reasoning-mcp
 npm install
 npm run build
 ```
