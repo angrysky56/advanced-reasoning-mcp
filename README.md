@@ -25,6 +25,8 @@ npm run build
 ### MCP Client Integration
 
 Add to your MCP client configuration:
+For Claude replace command: node with your path ie /home/<your-username>/.nvm/versions/node/<your-version>/bin/node`:
+
 ```json
 {
   "mcpServers": {
@@ -41,7 +43,9 @@ Add to your MCP client configuration:
 ### Core Reasoning
 
 #### `advanced_reasoning`
+
 Enhanced reasoning with cognitive features:
+
 - All sequential thinking capabilities (branching, revisions, dynamic thought counts)
 - **Confidence tracking** (0.0-1.0)
 - **Reasoning quality assessment** (low/medium/high)
@@ -51,7 +55,9 @@ Enhanced reasoning with cognitive features:
 - **Memory integration** with session context
 
 #### `query_reasoning_memory`
+
 Search integrated memory:
+
 - Find related insights and hypotheses
 - Discover connections between ideas
 - Build on previous reasoning sessions
@@ -60,57 +66,74 @@ Search integrated memory:
 ### Memory Library Management
 
 #### `create_memory_library`
+
 Create named memory libraries for organized knowledge:
+
 - Separate libraries for different projects/domains
 - Clean architectural separation
 - Library name validation
 
 #### `list_memory_libraries`
+
 List all available memory libraries:
+
 - Shows library metadata (name, size, last modified)
 - Organized, searchable library information
 
 #### `switch_memory_library`
+
 Switch between different memory libraries:
+
 - Maintains session state during switches
 - Context-aware library management
 
 #### `get_current_library_info`
+
 Get information about currently active library:
+
 - Current library name and statistics
 - Node count and session information
 
 ### SystemJSON Structured Storage
 
 #### `create_system_json`
+
 Create structured data storage for workflows and instructions:
+
 - Domain categorization
 - Searchable content with tags
 - JSON-serializable data storage
 - Atomic write operations with validation
 
 #### `get_system_json`
+
 Retrieve structured data by name:
+
 - Complete data retrieval with metadata
 - Timestamp and modification tracking
 
 #### `search_system_json`
+
 Search through structured data:
+
 - Relevance scoring and ranking
 - Multi-field search capability
 
 #### `list_system_json`
+
 List all available structured data files:
+
 - Organized by domain and description
 - Complete metadata overview
 
 ## 📝 Example Usage
 
 ### Basic Advanced Reasoning
+
 ```typescript
 // Create a new memory library for this project
 const library = await callTool("create_memory_library", {
-  library_name: "database_optimization"
+  library_name: "database_optimization",
 });
 
 // Advanced reasoning with meta-cognition (no session creation needed)
@@ -122,11 +145,12 @@ const result = await callTool("advanced_reasoning", {
   confidence: 0.8,
   reasoning_quality: "high",
   meta_thought: "This is a logical first step, high confidence approach",
-  goal: "Optimize database query performance"
+  goal: "Optimize database query performance",
 });
 ```
 
 ### Hypothesis Testing
+
 ```typescript
 const result = await callTool("advanced_reasoning", {
   thought: "The bottleneck appears to be in the JOIN operations",
@@ -137,19 +161,21 @@ const result = await callTool("advanced_reasoning", {
   reasoning_quality: "medium",
   meta_thought: "Need to verify this with actual data",
   hypothesis: "JOIN operations are causing 80% of query time",
-  test_plan: "Run EXPLAIN ANALYZE and check execution times"
+  test_plan: "Run EXPLAIN ANALYZE and check execution times",
 });
 ```
 
 ### Memory Integration
+
 ```typescript
 // Query related memories (no session_id needed)
 const memories = await callTool("query_reasoning_memory", {
-  query: "database optimization techniques"
+  query: "database optimization techniques",
 });
 ```
 
 ### SystemJSON Usage
+
 ```typescript
 // Store a workflow for reuse
 const workflow = await callTool("create_system_json", {
@@ -159,14 +185,14 @@ const workflow = await callTool("create_system_json", {
   data: {
     phases: ["setup", "unit_tests", "integration_tests", "performance_tests"],
     tools: ["jest", "supertest", "newman"],
-    checklist: ["auth validation", "error handling", "rate limiting"]
+    checklist: ["auth validation", "error handling", "rate limiting"],
   },
-  tags: ["testing", "api", "workflow"]
+  tags: ["testing", "api", "workflow"],
 });
 
 // Retrieve the workflow later
 const storedWorkflow = await callTool("get_system_json", {
-  name: "api_testing_workflow"
+  name: "api_testing_workflow",
 });
 ```
 
@@ -207,12 +233,14 @@ Built on proven sequential thinking with dual storage systems:
 ## 🎯 Advanced Features
 
 ### Meta-Cognitive Assessment
+
 - **Confidence Tracking**: Self-assessment of reasoning certainty (0.0-1.0)
 - **Quality Evaluation**: Low/medium/high reasoning quality indicators
 - **Meta-Thoughts**: Reflection on the reasoning process itself
 - **Evidence Integration**: Systematic collection and validation
 
 ### Hypothesis Testing Framework
+
 - **Hypothesis Formulation**: Explicit statement of working theories
 - **Test Planning**: Define validation/refutation strategies
 - **Evidence Tracking**: Collect supporting/contradicting evidence
@@ -221,6 +249,7 @@ Built on proven sequential thinking with dual storage systems:
 ### Dual Storage Architecture
 
 #### CognitiveMemory (Graph-Based)
+
 - **Named Libraries**: Separate contexts for different projects
 - **Graph Storage**: Connected thoughts, hypotheses, evidence
 - **Session Management**: Persistent reasoning contexts
@@ -228,6 +257,7 @@ Built on proven sequential thinking with dual storage systems:
 - **Storage**: `memory_data/{library_name}.json`
 
 #### SystemJSON (Document-Based)
+
 - **Structured Storage**: JSON-serializable workflows and instructions
 - **Domain Organization**: Categorized by domain/purpose
 - **Search & Discovery**: Full-text search with relevance scoring
@@ -235,6 +265,7 @@ Built on proven sequential thinking with dual storage systems:
 - **Storage**: `memory_data/system_json/{name}.json`
 
 ### Enhanced Visualization
+
 - **Confidence Bars**: Visual certainty representation
 - **Quality Indicators**: Color-coded reasoning assessment
 - **Rich Formatting**: Clear structure for complex reasoning
@@ -243,6 +274,7 @@ Built on proven sequential thinking with dual storage systems:
 ## 🔄 Compatibility
 
 Fully compatible with sequential thinking patterns:
+
 - All branching and revision capabilities preserved
 - Dynamic thought count adjustment supported
 - Familiar parameter structure with optional enhancements
@@ -273,11 +305,13 @@ memory_data/
 ## 📚 Use Cases
 
 ### Memory Libraries
+
 - **Project-specific reasoning**: Separate libraries per project
 - **Domain expertise**: Different libraries for different knowledge domains
 - **Context switching**: Clean separation between reasoning contexts
 
 ### SystemJSON Storage
+
 - **Workflow documentation**: Store reusable process definitions
 - **Instruction sets**: Step-by-step procedures and guidelines
 - **Domain knowledge**: Structured information for specific fields
