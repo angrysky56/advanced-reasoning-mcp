@@ -1,33 +1,120 @@
 #!/usr/bin/env node
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+/**
+ * Advanced Reasoning MCP Server
+ *
+ * Builds on the sequential-thinking pattern with meta-cognition, hypothesis
+ * testing, a graph-based memory system with named libraries, and structured
+ * SystemJSON document storage.
+ *
+ * Modernized to the high-level `McpServer` + `registerTool` API (SDK 1.x) with
+ * zod-validated tool inputs. See AGENTS.md for the agent-facing tool guide.
+ */
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  Tool,
-} from "@modelcontextprotocol/sdk/types.js";
-import chalk from 'chalk';
-import { promises as fs } from 'fs';
-import path from 'path';
+import { z } from "zod";
+import chalk from "chalk";
+import { promises as fs } from "fs";
+import { fileURLToPath } from "url";
+import path from "path";
+import { randomUUID } from "crypto";
 
 // ===== CONSTANTS =====
 
 const STOP_WORDS = new Set([
-  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
-  'in', 'is', 'it', 'its', 'of', 'on', 'or', 'that', 'the', 'to', 'was', 'were',
-  'will', 'with', 'the', 'this', 'but', 'they', 'have', 'had', 'what', 'when',
-  'where', 'who', 'which', 'why', 'how', 'all', 'any', 'both', 'each', 'few',
-  'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own',
-  'same', 'so', 'than', 'too', 'very', 'can', 'just', 'should', 'now'
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "has",
+  "he",
+  "in",
+  "is",
+  "it",
+  "its",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "to",
+  "was",
+  "were",
+  "will",
+  "with",
+  "this",
+  "but",
+  "they",
+  "have",
+  "had",
+  "what",
+  "when",
+  "where",
+  "who",
+  "which",
+  "why",
+  "how",
+  "all",
+  "any",
+  "both",
+  "each",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "no",
+  "nor",
+  "not",
+  "only",
+  "own",
+  "same",
+  "so",
+  "than",
+  "too",
+  "very",
+  "can",
+  "just",
+  "should",
+  "now",
 ]);
+
+// Resolve the project directory (one level up from build/ or src/) in a way
+// that is safe for paths containing spaces and works cross-platform.
+const PROJECT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const MEMORY_DATA_PATH = path.join(PROJECT_DIR, "..", "memory_data");
+const SYSTEM_JSON_PATH = path.join(MEMORY_DATA_PATH, "system_json");
+
+const NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/** Generate a short, collision-resistant id suffix. */
+function shortId(): string {
+  return randomUUID().slice(0, 8);
+}
+
+/** Tokenize content for TF-IDF: lowercase, strip punctuation, drop stop words. */
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, "")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+}
 
 // ===== TYPES =====
 
 interface MemoryNode {
   id: string;
   content: string;
-  type: 'thought' | 'hypothesis' | 'evidence' | 'conclusion';
+  type: "thought" | "hypothesis" | "evidence" | "conclusion";
   metadata: Record<string, unknown>;
   connections: string[];
   timestamp: number;
@@ -39,48 +126,11 @@ interface ReasoningContext {
   goal: string;
   currentFocus: string;
   confidence: number;
-  reasoning_quality: 'low' | 'medium' | 'high';
+  reasoning_quality: "low" | "medium" | "high";
   meta_assessment: string;
   active_hypotheses: string[];
   working_memory: string[];
 }
-
-interface AdvancedThoughtData {
-  // Core sequential thinking fields
-  thought: string;
-  thoughtNumber: number;
-  totalThoughts: number;
-  nextThoughtNeeded: boolean;
-
-  // Advanced cognitive fields
-  confidence: number;
-  reasoning_quality: 'low' | 'medium' | 'high';
-  meta_thought: string;
-  goal?: string;
-  progress?: number;
-
-  // Hypothesis testing
-  hypothesis?: string;
-  test_plan?: string;
-  test_result?: string;
-  evidence?: string[];
-
-  // Memory and context
-  session_id?: string;
-  builds_on?: string[];
-  challenges?: string[];
-
-  // Branching (inherited from sequential thinking)
-  isRevision?: boolean;
-  revisesThought?: number;
-  branchFromThought?: number;
-  branchId?: string;
-  needsMoreThoughts?: boolean;
-}
-
-// ===== SYSTEM JSON STORAGE =====
-// SystemJSON provides structured data storage for workflows, instructions, and domain-specific data
-// Storage: memory_data/system_json/{name}.json
 
 interface SystemJSONData {
   name: string;
@@ -93,21 +143,78 @@ interface SystemJSONData {
   modified: number;
 }
 
-class SystemJSON {
-  private systemJsonPath: string;
+type ToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+};
 
-  constructor() {
-    const projectDir = path.dirname(new URL(import.meta.url).pathname);
-    this.systemJsonPath = path.join(projectDir, '..', 'memory_data', 'system_json');
-    this.initializeStorage();
+/** Helper to build a JSON text tool result. */
+function jsonResult(payload: unknown, isError = false): ToolResult {
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+    isError: isError || undefined,
+  };
+}
+
+/** Helper to build an error tool result from a caught value. */
+function errorResult(error: unknown): ToolResult {
+  return jsonResult(
+    {
+      error: error instanceof Error ? error.message : String(error),
+      status: "failed",
+    },
+    true,
+  );
+}
+
+/**
+ * Serialized, atomic file writer.
+ *
+ * Snapshots are captured at enqueue time, so a write that is queued before a
+ * library switch always persists the correct (old) state to the correct file.
+ * Writes for the same path never run concurrently, preventing the temp-file
+ * clobbering that a fixed `.tmp` name would cause.
+ */
+class FileWriter {
+  private queue: Promise<unknown> = Promise.resolve();
+
+  enqueue(filePath: string, json: string): Promise<void> {
+    const task = this.queue.then(() => this.atomicWrite(filePath, json));
+    // Swallow rejection on the chain so one failure doesn't poison the queue,
+    // but still surface it to callers that await the returned promise.
+    this.queue = task.catch((error) => {
+      console.error(`File write failed for ${filePath}:`, error);
+    });
+    return task;
   }
 
-  private async initializeStorage(): Promise<void> {
+  private async atomicWrite(filePath: string, json: string): Promise<void> {
+    const tempPath = `${filePath}.${process.pid}.${Date.now()}.${shortId()}.tmp`;
+    await fs.writeFile(tempPath, json, "utf-8");
     try {
-      await fs.mkdir(this.systemJsonPath, { recursive: true });
+      await fs.rename(tempPath, filePath);
     } catch (error) {
-      console.error('Failed to initialize system JSON storage:', error);
+      await fs.unlink(tempPath).catch(() => {});
+      throw error;
     }
+  }
+}
+
+// ===== SYSTEM JSON STORAGE =====
+// Structured document storage for workflows, instructions and domain data.
+// Storage: memory_data/system_json/{name}.json
+
+class SystemJSON {
+  private writer = new FileWriter();
+  readonly ready: Promise<void>;
+
+  constructor() {
+    this.ready = fs
+      .mkdir(SYSTEM_JSON_PATH, { recursive: true })
+      .then(() => {})
+      .catch((error) => {
+        console.error("Failed to initialize system JSON storage:", error);
+      });
   }
 
   async createSystemJSON(
@@ -115,364 +222,347 @@ class SystemJSON {
     domain: string,
     description: string,
     data: Record<string, unknown>,
-    tags: string[] = []
+    tags: string[] = [],
   ): Promise<{ success: boolean; message: string }> {
-    try {
-      // Validate name (alphanumeric, underscore, hyphen only)
-      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-        return { success: false, message: 'Name must contain only letters, numbers, underscores, and hyphens' };
-      }
-
-      const fileName = `${name}.json`;
-      const filePath = path.join(this.systemJsonPath, fileName);
-
-      // Check if file already exists
-      try {
-        await fs.access(filePath);
-        return { success: false, message: `System JSON "${name}" already exists` };
-      } catch {
-        // File doesn't exist, which is what we want
-      }
-
-      // Create searchable content from data
-      const searchable_content = this.createSearchableContent(data, description, tags);
-
-      const systemData: SystemJSONData = {
-        name,
-        domain,
-        description,
-        data,
-        searchable_content,
-        tags,
-        created: Date.now(),
-        modified: Date.now()
+    if (!NAME_PATTERN.test(name)) {
+      return {
+        success: false,
+        message:
+          "Name must contain only letters, numbers, underscores, and hyphens",
       };
+    }
 
-      // Atomic write
-      const tempPath = path.join(this.systemJsonPath, `${fileName}.tmp`);
-      const jsonContent = JSON.stringify(systemData, null, 2);
-      await fs.writeFile(tempPath, jsonContent, 'utf-8');
+    const filePath = path.join(SYSTEM_JSON_PATH, `${name}.json`);
 
-      // Validate JSON before committing
-      try {
-        JSON.parse(jsonContent);
-        await fs.rename(tempPath, filePath);
-      } catch (parseError) {
-        await fs.unlink(tempPath).catch(() => { });
-        throw new Error(`JSON validation failed: ${parseError}`);
-      }
+    try {
+      await fs.access(filePath);
+      return {
+        success: false,
+        message: `System JSON "${name}" already exists`,
+      };
+    } catch {
+      // Does not exist yet — good.
+    }
 
+    const now = Date.now();
+    const systemData: SystemJSONData = {
+      name,
+      domain,
+      description,
+      data,
+      searchable_content: this.createSearchableContent(data, description, tags),
+      tags,
+      created: now,
+      modified: now,
+    };
+
+    try {
+      await this.writer.enqueue(filePath, JSON.stringify(systemData, null, 2));
       return { success: true, message: `Created system JSON: ${name}` };
     } catch (error) {
-      return { success: false, message: `Failed to create system JSON: ${error}` };
+      return {
+        success: false,
+        message: `Failed to create system JSON: ${error}`,
+      };
     }
   }
 
-  async getSystemJSON(name: string): Promise<{ success: boolean; data?: SystemJSONData; message: string }> {
+  async getSystemJSON(
+    name: string,
+  ): Promise<{ success: boolean; data?: SystemJSONData; message: string }> {
+    if (!NAME_PATTERN.test(name)) {
+      return {
+        success: false,
+        message:
+          "Name must contain only letters, numbers, underscores, and hyphens",
+      };
+    }
+
     try {
-      const fileName = `${name}.json`;
-      const filePath = path.join(this.systemJsonPath, fileName);
-
-      const jsonContent = await fs.readFile(filePath, 'utf-8');
-      const data = JSON.parse(jsonContent) as SystemJSONData;
-
-      return { success: true, data, message: `Retrieved system JSON: ${name}` };
+      const content = await fs.readFile(
+        path.join(SYSTEM_JSON_PATH, `${name}.json`),
+        "utf-8",
+      );
+      return {
+        success: true,
+        data: JSON.parse(content) as SystemJSONData,
+        message: `Retrieved system JSON: ${name}`,
+      };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return { success: false, message: `System JSON "${name}" not found` };
       }
-      return { success: false, message: `Failed to retrieve system JSON: ${error}` };
+      return {
+        success: false,
+        message: `Failed to retrieve system JSON: ${error}`,
+      };
     }
   }
 
-  async searchSystemJSON(query: string): Promise<{ results: Array<{ name: string; score: number; data: SystemJSONData }> }> {
+  async searchSystemJSON(
+    query: string,
+  ): Promise<{
+    results: Array<{ name: string; score: number; data: SystemJSONData }>;
+  }> {
+    const results: Array<{
+      name: string;
+      score: number;
+      data: SystemJSONData;
+    }> = [];
     try {
-      const files = await fs.readdir(this.systemJsonPath);
-      const results: Array<{ name: string; score: number; data: SystemJSONData }> = [];
-
+      const files = await fs.readdir(SYSTEM_JSON_PATH);
       for (const file of files) {
-        if (file.endsWith('.json') && !file.endsWith('.tmp')) {
-          try {
-            const filePath = path.join(this.systemJsonPath, file);
-            const jsonContent = await fs.readFile(filePath, 'utf-8');
-            const data = JSON.parse(jsonContent) as SystemJSONData;
-
-            const score = this.calculateSearchScore(query, data);
-            if (score > 0.1) {
-              results.push({ name: data.name, score, data });
-            }
-          } catch (error) {
-            // Skip corrupted files
-            console.error(`Skipping corrupted system JSON file: ${file}`, error);
-          }
+        if (!file.endsWith(".json") || file.endsWith(".tmp")) continue;
+        try {
+          const content = await fs.readFile(
+            path.join(SYSTEM_JSON_PATH, file),
+            "utf-8",
+          );
+          const data = JSON.parse(content) as SystemJSONData;
+          const score = this.calculateSearchScore(query, data);
+          if (score > 0.1) results.push({ name: data.name, score, data });
+        } catch (error) {
+          console.error(`Skipping corrupted system JSON file: ${file}`, error);
         }
       }
-
-      return { results: results.sort((a, b) => b.score - a.score) };
     } catch (error) {
-      console.error('Failed to search system JSON:', error);
-      return { results: [] };
+      console.error("Failed to search system JSON:", error);
     }
+    return { results: results.sort((a, b) => b.score - a.score) };
   }
 
-  async listSystemJSON(): Promise<{ files: Array<{ name: string; domain: string; description: string }> }> {
+  async listSystemJSON(): Promise<{
+    files: Array<{ name: string; domain: string; description: string }>;
+  }> {
+    const systemFiles: Array<{
+      name: string;
+      domain: string;
+      description: string;
+    }> = [];
     try {
-      const files = await fs.readdir(this.systemJsonPath);
-      const systemFiles = [];
-
+      const files = await fs.readdir(SYSTEM_JSON_PATH);
       for (const file of files) {
-        if (file.endsWith('.json') && !file.endsWith('.tmp')) {
-          try {
-            const filePath = path.join(this.systemJsonPath, file);
-            const jsonContent = await fs.readFile(filePath, 'utf-8');
-            const data = JSON.parse(jsonContent) as SystemJSONData;
-
-            systemFiles.push({
-              name: data.name,
-              domain: data.domain,
-              description: data.description
-            });
-          } catch (error) {
-            // Skip corrupted files
-            console.error(`Skipping corrupted system JSON file: ${file}`, error);
-          }
+        if (!file.endsWith(".json") || file.endsWith(".tmp")) continue;
+        try {
+          const content = await fs.readFile(
+            path.join(SYSTEM_JSON_PATH, file),
+            "utf-8",
+          );
+          const data = JSON.parse(content) as SystemJSONData;
+          systemFiles.push({
+            name: data.name,
+            domain: data.domain,
+            description: data.description,
+          });
+        } catch (error) {
+          console.error(`Skipping corrupted system JSON file: ${file}`, error);
         }
       }
-
-      return { files: systemFiles.sort((a, b) => a.name.localeCompare(b.name)) };
     } catch (error) {
-      console.error('Failed to list system JSON files:', error);
-      return { files: [] };
+      console.error("Failed to list system JSON files:", error);
     }
+    return { files: systemFiles.sort((a, b) => a.name.localeCompare(b.name)) };
   }
 
-  private createSearchableContent(data: Record<string, unknown>, description: string, tags: string[]): string {
-    const dataString = JSON.stringify(data, null, 2);
-    return `${description} ${tags.join(' ')} ${dataString}`.toLowerCase();
+  private createSearchableContent(
+    data: Record<string, unknown>,
+    description: string,
+    tags: string[],
+  ): string {
+    return `${description} ${tags.join(" ")} ${JSON.stringify(data)}`.toLowerCase();
   }
 
   private calculateSearchScore(query: string, data: SystemJSONData): number {
-    const queryWords = query.toLowerCase().split(/\s+/);
-    const contentWords = data.searchable_content.split(/\s+/);
-    const commonWords = queryWords.filter(word => contentWords.includes(word));
-    return commonWords.length / Math.max(queryWords.length, 1);
+    const queryWords = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (queryWords.length === 0) return 0;
+    const contentWords = new Set(data.searchable_content.split(/\s+/));
+    const common = queryWords.filter((word) => contentWords.has(word));
+    return common.length / queryWords.length;
   }
 }
 
-// ===== INTEGRATED GRAPH MEMORY WITH PERSISTENCE =====
-// Memory data is stored in: {project}/memory_data/{library_name}.json
-// Automatically saves on node/session creation and loads on startup
+// ===== GRAPH MEMORY WITH PERSISTENCE =====
+// Memory is stored in memory_data/{library_name}.json and auto-saved on change.
 
 class CognitiveMemory {
   private nodes: Map<string, MemoryNode> = new Map();
   private sessions: Map<string, ReasoningContext> = new Map();
-  private memoryDataPath: string;
-  private currentLibraryName: string = 'cognitive_memory'; // Default library name
+  private currentLibraryName = "cognitive_memory";
+  private writer = new FileWriter();
 
-  // TF-IDF State
+  // TF-IDF state
   private documentFrequencies: Map<string, number> = new Map();
-  private totalDocuments: number = 0;
+  private totalDocuments = 0;
+
+  readonly ready: Promise<void>;
 
   constructor() {
-    // Store memory data relative to the project directory, not cwd
-    const projectDir = path.dirname(new URL(import.meta.url).pathname);
-    this.memoryDataPath = path.join(projectDir, '..', 'memory_data');
-    this.initializeStorage();
+    this.ready = this.initializeStorage();
   }
 
   private async initializeStorage(): Promise<void> {
     try {
-      await fs.mkdir(this.memoryDataPath, { recursive: true });
+      await fs.mkdir(MEMORY_DATA_PATH, { recursive: true });
       await this.loadFromFile();
     } catch (error) {
-      console.error('Failed to initialize memory storage:', error);
+      console.error("Failed to initialize memory storage:", error);
     }
+  }
+
+  private libraryPath(name: string): string {
+    return path.join(MEMORY_DATA_PATH, `${name}.json`);
   }
 
   private updateTfIdfStats(content: string): void {
     this.totalDocuments++;
-    const words = new Set(
-      content.toLowerCase()
-        .replace(/[^\w\s]/g, '')
-        .split(/\s+/)
-        .filter(w => w.length > 2 && !STOP_WORDS.has(w))
-    );
-
-    for (const word of words) {
-      this.documentFrequencies.set(word, (this.documentFrequencies.get(word) || 0) + 1);
+    for (const word of new Set(tokenize(content))) {
+      this.documentFrequencies.set(
+        word,
+        (this.documentFrequencies.get(word) || 0) + 1,
+      );
     }
   }
 
   private rebuildSearchIndex(): void {
     this.documentFrequencies.clear();
     this.totalDocuments = 0;
-
-    for (const node of this.nodes.values()) {
-      this.updateTfIdfStats(node.content);
-    }
+    for (const node of this.nodes.values()) this.updateTfIdfStats(node.content);
   }
 
-  private async saveToFile(): Promise<void> {
-    try {
-      const memoryState = {
-        nodes: Array.from(this.nodes.entries()),
-        sessions: Array.from(this.sessions.entries()),
-        timestamp: Date.now(),
-        libraryName: this.currentLibraryName
-      };
-
-      const fileName = `${this.currentLibraryName}.json`;
-      const filePath = path.join(this.memoryDataPath, fileName);
-      const tempPath = path.join(this.memoryDataPath, `${fileName}.tmp`);
-
-      // Atomic write: write to temp file first, then rename
-      const jsonContent = JSON.stringify(memoryState, null, 2);
-      await fs.writeFile(tempPath, jsonContent, 'utf-8');
-
-      // Validate JSON before committing
-      try {
-        JSON.parse(jsonContent);
-        await fs.rename(tempPath, filePath);
-      } catch (parseError) {
-        await fs.unlink(tempPath).catch(() => { }); // Clean up temp file
-        throw new Error(`JSON validation failed: ${parseError}`);
-      }
-    } catch (error) {
-      console.error('Failed to save memory to file:', error);
-    }
+  /** Capture the current state as a JSON snapshot and queue an atomic write. */
+  private persist(): Promise<void> {
+    const memoryState = {
+      nodes: Array.from(this.nodes.entries()),
+      sessions: Array.from(this.sessions.entries()),
+      timestamp: Date.now(),
+      libraryName: this.currentLibraryName,
+    };
+    return this.writer.enqueue(
+      this.libraryPath(this.currentLibraryName),
+      JSON.stringify(memoryState, null, 2),
+    );
   }
 
   private async loadFromFile(libraryName?: string): Promise<void> {
+    const targetLibrary = libraryName || this.currentLibraryName;
     try {
-      const targetLibrary = libraryName || this.currentLibraryName;
-      const fileName = `${targetLibrary}.json`;
-      const filePath = path.join(this.memoryDataPath, fileName);
-
-      const data = await fs.readFile(filePath, 'utf-8');
-
-      // Validate JSON before parsing
-      let memoryState;
-      try {
-        memoryState = JSON.parse(data);
-      } catch (parseError) {
-        throw new Error(`Invalid JSON in library ${targetLibrary}: ${parseError}`);
-      }
-
+      const data = await fs.readFile(this.libraryPath(targetLibrary), "utf-8");
+      const memoryState = JSON.parse(data);
       this.nodes = new Map(memoryState.nodes);
       this.sessions = new Map(memoryState.sessions);
       this.currentLibraryName = targetLibrary;
-
-      // Rebuild search index from loaded nodes
       this.rebuildSearchIndex();
-
-      console.error(`Loaded ${this.nodes.size} memory nodes and ${this.sessions.size} sessions from library: ${targetLibrary}`);
+      console.error(
+        `Loaded ${this.nodes.size} memory nodes and ${this.sessions.size} sessions from library: ${targetLibrary}`,
+      );
     } catch (error) {
-      // File doesn't exist or is corrupted - start with empty memory
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error('Failed to load memory from file:', error);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.error("Failed to load memory from file:", error);
       }
-      // Ensure index is reset if load fails
       this.documentFrequencies.clear();
       this.totalDocuments = 0;
     }
   }
 
-  // === LIBRARY MANAGEMENT METHODS ===
+  // === LIBRARY MANAGEMENT ===
 
-  async createLibrary(libraryName: string): Promise<{ success: boolean; message: string }> {
+  async createLibrary(
+    libraryName: string,
+  ): Promise<{ success: boolean; message: string }> {
+    if (!NAME_PATTERN.test(libraryName)) {
+      return {
+        success: false,
+        message:
+          "Library name must contain only letters, numbers, underscores, and hyphens",
+      };
+    }
+
     try {
-      // Validate library name (alphanumeric, underscore, hyphen only)
-      if (!/^[a-zA-Z0-9_-]+$/.test(libraryName)) {
-        return { success: false, message: 'Library name must contain only letters, numbers, underscores, and hyphens' };
-      }
+      await fs.access(this.libraryPath(libraryName));
+      return {
+        success: false,
+        message: `Library "${libraryName}" already exists`,
+      };
+    } catch {
+      // Does not exist yet — good.
+    }
 
-      const fileName = `${libraryName}.json`;
-      const filePath = path.join(this.memoryDataPath, fileName);
-
-      // Check if library already exists
-      try {
-        await fs.access(filePath);
-        return { success: false, message: `Library "${libraryName}" already exists` };
-      } catch {
-        // Library doesn't exist, which is what we want
-      }
-
-      // Save current state if we have data
+    try {
+      // Snapshot current library first (queued at current name), then switch.
       if (this.nodes.size > 0 || this.sessions.size > 0) {
-        await this.saveToFile();
+        await this.persist();
       }
-
-      // Clear current memory and create new library
       this.nodes.clear();
       this.sessions.clear();
       this.rebuildSearchIndex();
       this.currentLibraryName = libraryName;
-
-      // Save empty library
-      await this.saveToFile();
-
+      await this.persist();
       return { success: true, message: `Created library: ${libraryName}` };
     } catch (error) {
       return { success: false, message: `Failed to create library: ${error}` };
     }
   }
 
-  async listLibraries(): Promise<{ libraries: Array<{ name: string; size: number; lastModified: Date }> }> {
+  async listLibraries(): Promise<{
+    libraries: Array<{ name: string; size: number; lastModified: Date }>;
+  }> {
+    const libraries: Array<{ name: string; size: number; lastModified: Date }> =
+      [];
     try {
-      const files = await fs.readdir(this.memoryDataPath);
-      const libraries = [];
-
+      const files = await fs.readdir(MEMORY_DATA_PATH);
       for (const file of files) {
-        if (file.endsWith('.json') && !file.endsWith('.tmp')) {
-          const filePath = path.join(this.memoryDataPath, file);
+        if (!file.endsWith(".json") || file.endsWith(".tmp")) continue;
+        const filePath = path.join(MEMORY_DATA_PATH, file);
+        try {
           const stats = await fs.stat(filePath);
-          const libraryName = file.replace('.json', '');
-
-          // Get library size (node count) by reading the file
-          try {
-            const data = await fs.readFile(filePath, 'utf-8');
-            const memoryState = JSON.parse(data);
-            const nodeCount = memoryState.nodes ? memoryState.nodes.length : 0;
-
-            libraries.push({
-              name: libraryName,
-              size: nodeCount,
-              lastModified: stats.mtime
-            });
-          } catch (error) {
-            // Skip corrupted files
-            console.error(`Skipping corrupted library file: ${file}`, error);
-          }
+          if (!stats.isFile()) continue;
+          const memoryState = JSON.parse(await fs.readFile(filePath, "utf-8"));
+          libraries.push({
+            name: file.replace(/\.json$/, ""),
+            size: Array.isArray(memoryState.nodes)
+              ? memoryState.nodes.length
+              : 0,
+            lastModified: stats.mtime,
+          });
+        } catch (error) {
+          console.error(`Skipping corrupted library file: ${file}`, error);
         }
       }
-
-      return { libraries: libraries.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime()) };
     } catch (error) {
-      console.error('Failed to list libraries:', error);
-      return { libraries: [] };
+      console.error("Failed to list libraries:", error);
     }
+    return {
+      libraries: libraries.sort(
+        (a, b) => b.lastModified.getTime() - a.lastModified.getTime(),
+      ),
+    };
   }
 
-  async switchLibrary(libraryName: string): Promise<{ success: boolean; message: string }> {
+  async switchLibrary(
+    libraryName: string,
+  ): Promise<{ success: boolean; message: string }> {
+    if (!NAME_PATTERN.test(libraryName)) {
+      return {
+        success: false,
+        message:
+          "Library name must contain only letters, numbers, underscores, and hyphens",
+      };
+    }
+
     try {
-      const fileName = `${libraryName}.json`;
-      const filePath = path.join(this.memoryDataPath, fileName);
+      await fs.access(this.libraryPath(libraryName));
+    } catch {
+      return {
+        success: false,
+        message: `Library "${libraryName}" does not exist`,
+      };
+    }
 
-      // Check if library exists
-      try {
-        await fs.access(filePath);
-      } catch {
-        return { success: false, message: `Library "${libraryName}" does not exist` };
-      }
-
-      // Save current state if we have unsaved changes
+    try {
       if (this.nodes.size > 0 || this.sessions.size > 0) {
-        await this.saveToFile();
+        await this.persist();
       }
-
-      // Load the new library
       await this.loadFromFile(libraryName);
-
       return { success: true, message: `Switched to library: ${libraryName}` };
     } catch (error) {
       return { success: false, message: `Failed to switch library: ${error}` };
@@ -483,990 +573,838 @@ class CognitiveMemory {
     return this.currentLibraryName;
   }
 
-  addNode(content: string, type: MemoryNode['type'], metadata: Record<string, unknown> = {}): string {
-    const id = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const node: MemoryNode = {
+  // === NODES ===
+
+  addNode(
+    content: string,
+    type: MemoryNode["type"],
+    metadata: Record<string, unknown> = {},
+  ): string {
+    const id = `node_${Date.now()}_${shortId()}`;
+    const confidence =
+      typeof metadata.confidence === "number" ? metadata.confidence : 0.5;
+    this.nodes.set(id, {
       id,
       content,
       type,
       metadata,
       connections: [],
       timestamp: Date.now(),
-      confidence: metadata.confidence as number || 0.5
-    };
-    this.nodes.set(id, node);
-
-    // Update TF-IDF index
+      confidence,
+    });
     this.updateTfIdfStats(content);
-
-    // Auto-save to persistence
-    this.saveToFile().catch(error =>
-      console.error('Failed to auto-save memory node:', error)
-    );
-
+    void this.persist();
     return id;
   }
 
-  connectNodes(nodeId1: string, nodeId2: string): void {
+  /** Create an undirected edge between two existing nodes. Returns success. */
+  connectNodes(nodeId1: string, nodeId2: string): boolean {
     const node1 = this.nodes.get(nodeId1);
     const node2 = this.nodes.get(nodeId2);
+    if (!node1 || !node2) return false;
 
-    if (node1 && node2) {
-      if (!node1.connections.includes(nodeId2)) {
-        node1.connections.push(nodeId2);
-      }
-      if (!node2.connections.includes(nodeId1)) {
-        node2.connections.push(nodeId1);
-      }
-
-      // Auto-save connection changes
-      this.saveToFile().catch(error =>
-        console.error('Failed to auto-save connections:', error)
-      );
-    }
+    if (!node1.connections.includes(nodeId2)) node1.connections.push(nodeId2);
+    if (!node2.connections.includes(nodeId1)) node2.connections.push(nodeId1);
+    void this.persist();
+    return true;
   }
 
-  queryRelated(content: string, maxResults: number = 5): MemoryNode[] {
+  hasNode(nodeId: string): boolean {
+    return this.nodes.has(nodeId);
+  }
+
+  queryRelated(
+    content: string,
+    maxResults = 5,
+    excludeId?: string,
+  ): MemoryNode[] {
     const results: Array<{ node: MemoryNode; relevance: number }> = [];
-
     for (const node of this.nodes.values()) {
+      if (node.id === excludeId) continue;
       const relevance = this.calculateRelevance(content, node.content);
-      if (relevance > 0.1) { // Threshold
-        results.push({ node, relevance });
-      }
+      if (relevance > 0.1) results.push({ node, relevance });
     }
-
     return results
       .sort((a, b) => b.relevance - a.relevance)
       .slice(0, maxResults)
-      .map(r => r.node);
+      .map((r) => r.node);
   }
 
   private calculateRelevance(query: string, content: string): number {
-    // TF-IDF Implementation
-    const queryTerms = query.toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .split(/\s+/)
-      .filter(w => w.length > 2 && !STOP_WORDS.has(w));
-
+    const queryTerms = tokenize(query);
     if (queryTerms.length === 0) return 0;
 
-    const contentTerms = content.toLowerCase()
-      .replace(/[^\w\s]/g, '')
+    const contentTerms = content
+      .toLowerCase()
+      .replace(/[^\w\s]/g, "")
       .split(/\s+/);
+    if (contentTerms.length === 0) return 0;
 
     let score = 0;
-
     for (const term of queryTerms) {
-      // Term Frequency (TF) in content
-      const termCount = contentTerms.filter(w => w === term).length;
+      const termCount = contentTerms.filter((w) => w === term).length;
       if (termCount === 0) continue;
-
       const tf = termCount / contentTerms.length;
-
-      // Inverse Document Frequency (IDF)
-      // log(total_docs / (docs_with_term + 1))
       const docFreq = this.documentFrequencies.get(term) || 0;
       const idf = Math.log(this.totalDocuments / (docFreq + 1)) + 1; // +1 smoothing
-
       score += tf * idf;
     }
-
     return score;
   }
 
+  // === SESSIONS ===
+
   async createSession(goal: string, libraryName?: string): Promise<string> {
-    // Switch to specified library if provided (now properly awaited)
     if (libraryName && libraryName !== this.currentLibraryName) {
       const switchResult = await this.switchLibrary(libraryName);
       if (!switchResult.success) {
-        console.error(`Failed to switch to library ${libraryName}:`, switchResult.message);
-        // Continue with current library rather than failing
+        console.error(
+          `Failed to switch to library ${libraryName}:`,
+          switchResult.message,
+        );
       }
     }
 
-    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const context: ReasoningContext = {
+    const sessionId = `session_${Date.now()}_${shortId()}`;
+    this.sessions.set(sessionId, {
       sessionId,
       goal,
       currentFocus: goal,
       confidence: 0.5,
-      reasoning_quality: 'medium',
-      meta_assessment: 'Starting new reasoning session',
+      reasoning_quality: "medium",
+      meta_assessment: "Starting new reasoning session",
       active_hypotheses: [],
-      working_memory: []
-    };
-    this.sessions.set(sessionId, context);
-
-    // Auto-save to persistence
-    await this.saveToFile();
-
+      working_memory: [],
+    });
+    await this.persist();
     return sessionId;
+  }
+
+  /** Ensure a session exists; create a lightweight one if missing. */
+  ensureSession(
+    sessionId: string,
+    goal = "Ad-hoc reasoning session",
+  ): ReasoningContext {
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      session = {
+        sessionId,
+        goal,
+        currentFocus: goal,
+        confidence: 0.5,
+        reasoning_quality: "medium",
+        meta_assessment: "Auto-created session",
+        active_hypotheses: [],
+        working_memory: [],
+      };
+      this.sessions.set(sessionId, session);
+      void this.persist();
+    }
+    return session;
   }
 
   updateSession(sessionId: string, updates: Partial<ReasoningContext>): void {
     const session = this.sessions.get(sessionId);
-    if (session) {
-      Object.assign(session, updates);
-
-      // Auto-save to persistence
-      this.saveToFile().catch(error =>
-        console.error('Failed to auto-save session update:', error)
-      );
-    }
+    if (!session) return;
+    Object.assign(session, updates);
+    void this.persist();
   }
 
   getSession(sessionId: string): ReasoningContext | undefined {
     return this.sessions.get(sessionId);
   }
 
-  getMemoryStats(): { nodes: number; sessions: number; connections: number; totalDocuments: number } {
+  getMemoryStats(): {
+    nodes: number;
+    sessions: number;
+    connections: number;
+    totalDocuments: number;
+  } {
     let connections = 0;
-    for (const node of this.nodes.values()) {
+    for (const node of this.nodes.values())
       connections += node.connections.length;
-    }
     return {
       nodes: this.nodes.size,
       sessions: this.sessions.size,
-      connections: connections / 2, // Each connection is counted twice
-      totalDocuments: this.totalDocuments
+      connections: connections / 2, // each edge counted from both ends
+      totalDocuments: this.totalDocuments,
     };
   }
 }
 
 // ===== ADVANCED REASONING SERVER =====
 
+interface AdvancedThoughtData {
+  thought: string;
+  thoughtNumber: number;
+  totalThoughts: number;
+  nextThoughtNeeded: boolean;
+  confidence: number;
+  reasoning_quality: "low" | "medium" | "high";
+  meta_thought: string;
+  goal?: string;
+  progress?: number;
+  hypothesis?: string;
+  test_plan?: string;
+  test_result?: string;
+  evidence?: string[];
+  session_id?: string;
+  builds_on?: string[];
+  challenges?: string[];
+  isRevision?: boolean;
+  revisesThought?: number;
+  branchFromThought?: number;
+  branchId?: string;
+  needsMoreThoughts?: boolean;
+}
+
 class AdvancedReasoningServer {
   private thoughtHistory: AdvancedThoughtData[] = [];
-  private branches: Record<string, AdvancedThoughtData[]> = {};
-  private memory: CognitiveMemory = new CognitiveMemory();
-  private systemJson: SystemJSON = new SystemJSON();
+  private branches = new Map<string, AdvancedThoughtData[]>();
+  private memory = new CognitiveMemory();
+  private systemJson = new SystemJSON();
   private disableLogging: boolean;
 
   constructor() {
-    this.disableLogging = (process.env.DISABLE_REASONING_LOGGING || "").toLowerCase() === "true";
+    this.disableLogging =
+      (process.env.DISABLE_REASONING_LOGGING || "").toLowerCase() === "true";
   }
 
-  private validateThoughtData(input: unknown): AdvancedThoughtData {
-    const data = input as Record<string, unknown>;
-
-    // Validate core fields
-    if (!data.thought || typeof data.thought !== 'string') {
-      throw new Error('Invalid thought: must be a string');
-    }
-    if (!data.thoughtNumber || typeof data.thoughtNumber !== 'number') {
-      throw new Error('Invalid thoughtNumber: must be a number');
-    }
-    if (!data.totalThoughts || typeof data.totalThoughts !== 'number') {
-      throw new Error('Invalid totalThoughts: must be a number');
-    }
-    if (typeof data.nextThoughtNeeded !== 'boolean') {
-      throw new Error('Invalid nextThoughtNeeded: must be a boolean');
-    }
-
-    // Validate advanced fields with defaults
-    const confidence = typeof data.confidence === 'number' ? data.confidence : 0.5;
-    const reasoning_quality = ['low', 'medium', 'high'].includes(data.reasoning_quality as string)
-      ? data.reasoning_quality as 'low' | 'medium' | 'high'
-      : 'medium';
-
-    return {
-      thought: data.thought,
-      thoughtNumber: data.thoughtNumber,
-      totalThoughts: data.totalThoughts,
-      nextThoughtNeeded: data.nextThoughtNeeded,
-      confidence,
-      reasoning_quality,
-      meta_thought: data.meta_thought as string || '',
-      goal: data.goal as string,
-      progress: data.progress as number,
-      hypothesis: data.hypothesis as string,
-      test_plan: data.test_plan as string,
-      test_result: data.test_result as string,
-      evidence: data.evidence as string[],
-      session_id: data.session_id as string,
-      builds_on: data.builds_on as string[],
-      challenges: data.challenges as string[],
-      isRevision: data.isRevision as boolean,
-      revisesThought: data.revisesThought as number,
-      branchFromThought: data.branchFromThought as number,
-      branchId: data.branchId as string,
-      needsMoreThoughts: data.needsMoreThoughts as boolean,
-    };
+  /** Resolves once both storage layers have finished loading. */
+  async ready(): Promise<void> {
+    await Promise.all([this.memory.ready, this.systemJson.ready]);
   }
 
-  private formatAdvancedThought(thoughtData: AdvancedThoughtData): string {
-    const {
-      thoughtNumber,
-      totalThoughts,
-      thought,
-      confidence,
-      reasoning_quality,
-      meta_thought,
-      hypothesis,
-      isRevision,
-      revisesThought,
-      branchFromThought,
-      branchId
-    } = thoughtData;
-
-    let prefix = '';
-    let context = '';
-
-    if (isRevision) {
-      prefix = chalk.yellow('🔄 Revision');
-      context = ` (revising thought ${revisesThought})`;
-    } else if (branchFromThought) {
-      prefix = chalk.green('🌿 Branch');
-      context = ` (from thought ${branchFromThought}, ID: ${branchId})`;
+  private formatAdvancedThought(t: AdvancedThoughtData): string {
+    let prefix: string;
+    let context = "";
+    if (t.isRevision) {
+      prefix = chalk.yellow("🔄 Revision");
+      context = ` (revising thought ${t.revisesThought})`;
+    } else if (t.branchFromThought) {
+      prefix = chalk.green("🌿 Branch");
+      context = ` (from thought ${t.branchFromThought}, ID: ${t.branchId})`;
     } else {
-      prefix = chalk.blue('🧠 Advanced Thought');
-      context = '';
+      prefix = chalk.blue("🧠 Advanced Thought");
     }
 
-    // Quality and confidence indicators
-    const qualityColor = reasoning_quality === 'high' ? chalk.green :
-      reasoning_quality === 'medium' ? chalk.yellow : chalk.red;
-    const confidenceBar = '█'.repeat(Math.round(confidence * 10));
-    const confidenceDisplay = chalk.cyan(`[${confidenceBar.padEnd(10)}] ${Math.round(confidence * 100)}%`);
+    const qualityColor =
+      t.reasoning_quality === "high"
+        ? chalk.green
+        : t.reasoning_quality === "medium"
+          ? chalk.yellow
+          : chalk.red;
+    const confidenceBar = "█".repeat(Math.round(t.confidence * 10));
+    const confidenceDisplay = chalk.cyan(
+      `[${confidenceBar.padEnd(10)}] ${Math.round(t.confidence * 100)}%`,
+    );
 
-    const header = `${prefix} ${thoughtNumber}/${totalThoughts}${context}`;
-    const quality = qualityColor(`Quality: ${reasoning_quality.toUpperCase()}`);
+    const header = `${prefix} ${t.thoughtNumber}/${t.totalThoughts}${context}`;
+    const quality = qualityColor(
+      `Quality: ${t.reasoning_quality.toUpperCase()}`,
+    );
     const confDisplay = `Confidence: ${confidenceDisplay}`;
 
-    let content = `Main: ${thought}`;
-    if (meta_thought) {
-      content += `\nMeta: ${chalk.italic(meta_thought)}`;
-    }
-    if (hypothesis) {
-      content += `\nHypothesis: ${chalk.magenta(hypothesis)}`;
-    }
+    let content = `Main: ${t.thought}`;
+    if (t.meta_thought) content += `\nMeta: ${chalk.italic(t.meta_thought)}`;
+    if (t.hypothesis) content += `\nHypothesis: ${chalk.magenta(t.hypothesis)}`;
 
-    const border = '─'.repeat(Math.max(header.length, content.length) + 4);
-
+    const border = "─".repeat(Math.max(header.length, content.length) + 4);
     return `
 ┌${border}┐
 │ ${header.padEnd(border.length - 2)} │
 │ ${quality} │ ${confDisplay} │
 ├${border}┤
-│ ${content.split('\n').map(line => line.padEnd(border.length - 2)).join(' │\n│ ')} │
+│ ${content
+      .split("\n")
+      .map((line) => line.padEnd(border.length - 2))
+      .join(" │\n│ ")} │
 └${border}┘`;
   }
 
-  public processAdvancedThought(input: unknown): { content: Array<{ type: string; text: string }>; isError?: boolean } {
+  processAdvancedThought(data: AdvancedThoughtData): ToolResult {
     try {
-      const validatedInput = this.validateThoughtData(input);
-
-      // Auto-adjust total thoughts if needed
-      if (validatedInput.thoughtNumber > validatedInput.totalThoughts) {
-        validatedInput.totalThoughts = validatedInput.thoughtNumber;
+      if (data.thoughtNumber > data.totalThoughts) {
+        data.totalThoughts = data.thoughtNumber;
       }
 
-      // Store in memory if session provided
-      if (validatedInput.session_id) {
-        const nodeId = this.memory.addNode(
-          validatedInput.thought,
-          'thought',
-          {
-            confidence: validatedInput.confidence,
-            reasoning_quality: validatedInput.reasoning_quality,
-            thoughtNumber: validatedInput.thoughtNumber,
-            hypothesis: validatedInput.hypothesis
-          }
-        );
+      const edgeReport: {
+        builds_on: string[];
+        challenges: string[];
+        missing: string[];
+      } = {
+        builds_on: [],
+        challenges: [],
+        missing: [],
+      };
 
-        // NEW: Create graph edges from builds_on references
-        // We interpret strings in builds_on as Node IDs
-        if (validatedInput.builds_on && validatedInput.builds_on.length > 0) {
-          validatedInput.builds_on.forEach(targetId => {
-            this.memory.connectNodes(nodeId, targetId);
-          });
+      if (data.session_id) {
+        this.memory.ensureSession(data.session_id, data.goal);
+        const nodeId = this.memory.addNode(data.thought, "thought", {
+          confidence: data.confidence,
+          reasoning_quality: data.reasoning_quality,
+          thoughtNumber: data.thoughtNumber,
+          hypothesis: data.hypothesis,
+          session_id: data.session_id,
+        });
+
+        // Build graph edges from references. Both builds_on and challenges are
+        // interpreted as node IDs of prior thoughts.
+        for (const targetId of data.builds_on ?? []) {
+          if (this.memory.connectNodes(nodeId, targetId))
+            edgeReport.builds_on.push(targetId);
+          else edgeReport.missing.push(targetId);
+        }
+        for (const targetId of data.challenges ?? []) {
+          if (this.memory.connectNodes(nodeId, targetId))
+            edgeReport.challenges.push(targetId);
+          else edgeReport.missing.push(targetId);
         }
 
-        // Update session context
-        this.memory.updateSession(validatedInput.session_id, {
-          currentFocus: validatedInput.thought,
-          confidence: validatedInput.confidence,
-          reasoning_quality: validatedInput.reasoning_quality,
-          meta_assessment: validatedInput.meta_thought
+        this.memory.updateSession(data.session_id, {
+          currentFocus: data.thought,
+          confidence: data.confidence,
+          reasoning_quality: data.reasoning_quality,
+          meta_assessment: data.meta_thought,
+        });
+
+        this.thoughtHistory.push(data);
+
+        if (data.branchFromThought && data.branchId) {
+          if (data.branchId === "__proto__" || data.branchId === "constructor" || data.branchId === "prototype") {
+            throw new Error("Invalid branchId");
+          }
+          let branch = this.branches.get(data.branchId);
+          if (!branch) {
+            branch = [];
+            this.branches.set(data.branchId, branch);
+          }
+          branch.push(data);
+        }
+
+        if (!this.disableLogging)
+          console.error(this.formatAdvancedThought(data));
+
+        const relatedMemories = this.memory.queryRelated(
+          data.thought,
+          3,
+          nodeId,
+        );
+        return jsonResult({
+          thoughtNumber: data.thoughtNumber,
+          totalThoughts: data.totalThoughts,
+          nextThoughtNeeded: data.nextThoughtNeeded,
+          confidence: data.confidence,
+          reasoning_quality: data.reasoning_quality,
+          meta_assessment: data.meta_thought,
+          hypothesis: data.hypothesis,
+          nodeId,
+          edges: edgeReport,
+          branches: Array.from(this.branches.keys()),
+          thoughtHistoryLength: this.thoughtHistory.length,
+          memoryStats: this.memory.getMemoryStats(),
+          relatedMemories: relatedMemories.map((m) => ({
+            id: m.id,
+            content: m.content,
+            confidence: m.confidence,
+          })),
+          suggested_connections: relatedMemories.map((m) => m.id),
+          consistency_note:
+            relatedMemories.length > 0
+              ? "Verify consistency with related thoughts above"
+              : undefined,
         });
       }
 
-      // Add to history
-      this.thoughtHistory.push(validatedInput);
-
-      // Handle branching
-      if (validatedInput.branchFromThought && validatedInput.branchId) {
-        if (!this.branches[validatedInput.branchId]) {
-          this.branches[validatedInput.branchId] = [];
+      // No session: history-only mode (no persistence).
+      this.thoughtHistory.push(data);
+      if (data.branchFromThought && data.branchId) {
+        if (data.branchId === "__proto__" || data.branchId === "constructor" || data.branchId === "prototype") {
+          throw new Error("Invalid branchId");
         }
-        this.branches[validatedInput.branchId].push(validatedInput);
+        let branch = this.branches.get(data.branchId);
+        if (!branch) {
+          branch = [];
+          this.branches.set(data.branchId, branch);
+        }
+        branch.push(data);
       }
+      if (!this.disableLogging) console.error(this.formatAdvancedThought(data));
 
-      // Format and log
-      if (!this.disableLogging) {
-        const formattedThought = this.formatAdvancedThought(validatedInput);
-        console.error(formattedThought);
-      }
-
-      // Generate related memories if session provided (for output)
-      // NEW: Passive context injection - automatically suggest connections
-      let relatedMemories: MemoryNode[] = [];
-      if (validatedInput.session_id) {
-        relatedMemories = this.memory.queryRelated(validatedInput.thought, 3);
-      }
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            thoughtNumber: validatedInput.thoughtNumber,
-            totalThoughts: validatedInput.totalThoughts,
-            nextThoughtNeeded: validatedInput.nextThoughtNeeded,
-            confidence: validatedInput.confidence,
-            reasoning_quality: validatedInput.reasoning_quality,
-            meta_assessment: validatedInput.meta_thought,
-            hypothesis: validatedInput.hypothesis,
-            branches: Object.keys(this.branches),
-            thoughtHistoryLength: this.thoughtHistory.length,
-            memoryStats: this.memory.getMemoryStats(),
-            // Enhanced output with passive suggestions
-            relatedMemories: relatedMemories.map(m => ({ content: m.content, confidence: m.confidence })),
-            suggested_connections: relatedMemories.map(m => m.id),
-            consistency_note: relatedMemories.length > 0 ? "Verify consistency with related thoughts above" : undefined
-          }, null, 2)
-        }]
-      };
+      return jsonResult({
+        thoughtNumber: data.thoughtNumber,
+        totalThoughts: data.totalThoughts,
+        nextThoughtNeeded: data.nextThoughtNeeded,
+        confidence: data.confidence,
+        reasoning_quality: data.reasoning_quality,
+        meta_assessment: data.meta_thought,
+        hypothesis: data.hypothesis,
+        branches: Array.from(this.branches.keys()),
+        thoughtHistoryLength: this.thoughtHistory.length,
+        note: "No session_id provided — thought not persisted to memory. Pass session_id to enable memory.",
+      });
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public async createLibrary(libraryName: string): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  async createSession(goal: string, libraryName?: string): Promise<ToolResult> {
+    try {
+      const sessionId = await this.memory.createSession(goal, libraryName);
+      return jsonResult({
+        sessionId,
+        goal,
+        currentLibrary: this.memory.getCurrentLibraryName(),
+        message:
+          "Reasoning session created. Pass this session_id to advanced_reasoning to persist thoughts.",
+      });
+    } catch (error) {
+      return errorResult(error);
+    }
+  }
+
+  async createLibrary(libraryName: string): Promise<ToolResult> {
     try {
       const result = await this.memory.createLibrary(libraryName);
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            libraryName,
-            success: result.success,
-            message: result.message,
-            currentLibrary: this.memory.getCurrentLibraryName()
-          }, null, 2)
-        }],
-        isError: !result.success
-      };
+      return jsonResult(
+        {
+          libraryName,
+          success: result.success,
+          message: result.message,
+          currentLibrary: this.memory.getCurrentLibraryName(),
+        },
+        !result.success,
+      );
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public async listLibraries(): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  async listLibraries(): Promise<ToolResult> {
     try {
       const result = await this.memory.listLibraries();
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            currentLibrary: this.memory.getCurrentLibraryName(),
-            libraries: result.libraries,
-            totalLibraries: result.libraries.length
-          }, null, 2)
-        }]
-      };
+      return jsonResult({
+        currentLibrary: this.memory.getCurrentLibraryName(),
+        libraries: result.libraries,
+        totalLibraries: result.libraries.length,
+      });
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public async switchLibrary(libraryName: string): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  async switchLibrary(libraryName: string): Promise<ToolResult> {
     try {
       const result = await this.memory.switchLibrary(libraryName);
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            libraryName,
-            success: result.success,
-            message: result.message,
-            currentLibrary: this.memory.getCurrentLibraryName(),
-            memoryStats: this.memory.getMemoryStats()
-          }, null, 2)
-        }],
-        isError: !result.success
-      };
+      return jsonResult(
+        {
+          libraryName,
+          success: result.success,
+          message: result.message,
+          currentLibrary: this.memory.getCurrentLibraryName(),
+          memoryStats: this.memory.getMemoryStats(),
+        },
+        !result.success,
+      );
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public getCurrentLibraryInfo(): { content: Array<{ type: string; text: string }>; isError?: boolean } {
+  getCurrentLibraryInfo(): ToolResult {
     try {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            currentLibrary: this.memory.getCurrentLibraryName(),
-            memoryStats: this.memory.getMemoryStats(),
-            status: 'success'
-          }, null, 2)
-        }]
-      };
+      return jsonResult({
+        currentLibrary: this.memory.getCurrentLibraryName(),
+        memoryStats: this.memory.getMemoryStats(),
+        status: "success",
+      });
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public queryMemory(sessionId: string, query: string): { content: Array<{ type: string; text: string }>; isError?: boolean } {
+  queryMemory(query: string, sessionId?: string): ToolResult {
     try {
       const relatedNodes = this.memory.queryRelated(query, 10);
-      const session = this.memory.getSession(sessionId);
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            query,
-            sessionContext: session,
-            relatedMemories: relatedNodes.map(node => ({
-              content: node.content,
-              type: node.type,
-              confidence: node.confidence,
-              connections: node.connections.length
-            })),
-            memoryStats: this.memory.getMemoryStats()
-          }, null, 2)
-        }]
-      };
+      const session = sessionId ? this.memory.getSession(sessionId) : undefined;
+      return jsonResult({
+        query,
+        sessionContext: session,
+        relatedMemories: relatedNodes.map((node) => ({
+          id: node.id,
+          content: node.content,
+          type: node.type,
+          confidence: node.confidence,
+          connections: node.connections.length,
+        })),
+        memoryStats: this.memory.getMemoryStats(),
+      });
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public async createSystemJSON(
+  async createSystemJSON(
     name: string,
     domain: string,
     description: string,
     data: Record<string, unknown>,
-    tags: string[] = []
-  ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    tags: string[] = [],
+  ): Promise<ToolResult> {
     try {
-      const result = await this.systemJson.createSystemJSON(name, domain, description, data, tags);
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            name,
-            domain,
-            description,
-            success: result.success,
-            message: result.message,
-            tags,
-            created: Date.now()
-          }, null, 2)
-        }],
-        isError: !result.success
-      };
+      const result = await this.systemJson.createSystemJSON(
+        name,
+        domain,
+        description,
+        data,
+        tags,
+      );
+      return jsonResult(
+        {
+          name,
+          domain,
+          description,
+          success: result.success,
+          message: result.message,
+          tags,
+          created: Date.now(),
+        },
+        !result.success,
+      );
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public async getSystemJSON(name: string): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  async getSystemJSON(name: string): Promise<ToolResult> {
     try {
       const result = await this.systemJson.getSystemJSON(name);
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            name,
-            success: result.success,
-            message: result.message,
-            data: result.data || null
-          }, null, 2)
-        }],
-        isError: !result.success
-      };
+      return jsonResult(
+        {
+          name,
+          success: result.success,
+          message: result.message,
+          data: result.data || null,
+        },
+        !result.success,
+      );
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public async searchSystemJSON(query: string): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  async searchSystemJSON(query: string): Promise<ToolResult> {
     try {
       const result = await this.systemJson.searchSystemJSON(query);
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            query,
-            results: result.results.map(r => ({
-              name: r.name,
-              score: r.score,
-              domain: r.data.domain,
-              description: r.data.description,
-              tags: r.data.tags
-            })),
-            totalResults: result.results.length
-          }, null, 2)
-        }]
-      };
+      return jsonResult({
+        query,
+        results: result.results.map((r) => ({
+          name: r.name,
+          score: r.score,
+          domain: r.data.domain,
+          description: r.data.description,
+          tags: r.data.tags,
+        })),
+        totalResults: result.results.length,
+      });
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 
-  public async listSystemJSON(): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  async listSystemJSON(): Promise<ToolResult> {
     try {
       const result = await this.systemJson.listSystemJSON();
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            files: result.files,
-            totalFiles: result.files.length,
-            status: 'success'
-          }, null, 2)
-        }]
-      };
+      return jsonResult({
+        files: result.files,
+        totalFiles: result.files.length,
+        status: "success",
+      });
     } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            status: 'failed'
-          }, null, 2)
-        }],
-        isError: true
-      };
+      return errorResult(error);
     }
   }
 }
-// ===== TOOLS DEFINITION =====
 
-const ADVANCED_REASONING_TOOL: Tool = {
-  name: "advanced_reasoning",
-  description: `Advanced cognitive reasoning tool that builds on sequential thinking with meta-cognition, hypothesis testing, and integrated memory.
+// ===== TOOL INPUT SCHEMAS (zod) =====
 
-Key Features:
-- Meta-cognitive assessment and confidence tracking
-- Hypothesis formulation and testing capabilities
-- Integrated graph-based memory system
-- Dynamic reasoning quality evaluation
-- Session-based context management
-- Evidence tracking and validation
-
-Enhanced Parameters:
-- thought: Your reasoning step (required)
-- thoughtNumber/totalThoughts: Sequential tracking (required)
-- nextThoughtNeeded: Continue flag (required)
-- confidence: Self-assessment 0.0-1.0 (default: 0.5)
-- reasoning_quality: 'low'|'medium'|'high' (default: 'medium')
-- meta_thought: Reflection on your reasoning process
-- hypothesis: Current working hypothesis
-- test_plan: How to validate the hypothesis
-- test_result: Outcome of testing
-- evidence: Supporting/contradicting evidence
-- session_id: Link to reasoning session
-- goal: Overall objective
-- progress: 0.0-1.0 completion estimate
-
-Branching (inherited from sequential thinking):
-- isRevision/revisesThought: Revise previous thoughts
-- branchFromThought/branchId: Explore alternatives
-
-Use this tool for complex reasoning that benefits from:
-- Self-reflection and confidence tracking
-- Systematic hypothesis development
-- Memory of previous insights
-- Quality assessment of reasoning`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      // Core sequential thinking fields
-      thought: { type: "string", description: "Your current reasoning step" },
-      nextThoughtNeeded: { type: "boolean", description: "Whether another thought step is needed" },
-      thoughtNumber: { type: "integer", description: "Current thought number", minimum: 1 },
-      totalThoughts: { type: "integer", description: "Estimated total thoughts needed", minimum: 1 },
-
-      // Advanced cognitive fields
-      confidence: { type: "number", description: "Confidence in this reasoning step (0.0-1.0)", minimum: 0, maximum: 1 },
-      reasoning_quality: { type: "string", description: "Assessment of reasoning quality", enum: ["low", "medium", "high"] },
-      meta_thought: { type: "string", description: "Meta-cognitive reflection on your reasoning process" },
-      goal: { type: "string", description: "Overall goal or objective" },
-      progress: { type: "number", description: "Progress toward goal (0.0-1.0)", minimum: 0, maximum: 1 },
-
-      // Hypothesis testing
-      hypothesis: { type: "string", description: "Current working hypothesis" },
-      test_plan: { type: "string", description: "Plan for testing the hypothesis" },
-      test_result: { type: "string", description: "Result of hypothesis testing" },
-      evidence: { type: "array", items: { type: "string" }, description: "Evidence for/against hypothesis" },
-
-      // Memory and context
-      session_id: { type: "string", description: "Reasoning session identifier" },
-      builds_on: { type: "array", items: { type: "string" }, description: "Previous thoughts this builds on" },
-      challenges: { type: "array", items: { type: "string" }, description: "Ideas this challenges or contradicts" },
-
-      // Branching (inherited)
-      isRevision: { type: "boolean", description: "Whether this revises previous thinking" },
-      revisesThought: { type: "integer", description: "Which thought is being reconsidered", minimum: 1 },
-      branchFromThought: { type: "integer", description: "Branching point thought number", minimum: 1 },
-      branchId: { type: "string", description: "Branch identifier" },
-      needsMoreThoughts: { type: "boolean", description: "If more thoughts are needed" }
-    },
-    required: ["thought", "nextThoughtNeeded", "thoughtNumber", "totalThoughts"]
-  }
-};
-
-const QUERY_MEMORY_TOOL: Tool = {
-  name: "query_reasoning_memory",
-  description: `Query the integrated memory system to find related insights, hypotheses, and evidence.
-
-Useful for:
-- Finding similar problems solved before
-- Retrieving relevant hypotheses and evidence
-- Understanding connections between ideas
-- Building on previous reasoning sessions
-
-Parameters:
-- session_id: The reasoning session to query within (required)
-- query: What to search for in memory (required)
-
-Returns related memories with confidence scores and connection information.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      session_id: { type: "string", description: "Reasoning session identifier" },
-      query: { type: "string", description: "What to search for in memory" }
-    },
-    required: ["session_id", "query"]
-  }
-};
-
-const CREATE_LIBRARY_TOOL: Tool = {
-  name: "create_memory_library",
-  description: `Create a new named memory library for organized knowledge storage.
-
-Enables you to create separate, named memory libraries for different projects, domains, or contexts.
-Library names must contain only letters, numbers, underscores, and hyphens.
-
-Parameters:
-- library_name: Name for the new library (required)
-
-Returns success status and message.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      library_name: { type: "string", description: "Name for the new memory library" }
-    },
-    required: ["library_name"]
-  }
-};
-
-const LIST_LIBRARIES_TOOL: Tool = {
-  name: "list_memory_libraries",
-  description: `List all available memory libraries with metadata.
-
-Shows all existing memory libraries with information about:
-- Library name
-- Number of memory nodes
-- Last modified date
-
-Returns organized, searchable library information.`,
-  inputSchema: {
-    type: "object",
-    properties: {},
-    required: []
-  }
-};
-
-const SWITCH_LIBRARY_TOOL: Tool = {
-  name: "switch_memory_library",
-  description: `Switch to a different memory library.
-
-Allows you to switch between different memory libraries for different contexts or projects.
-Current session state is saved before switching.
-
-Parameters:
-- library_name: Name of the library to switch to (required)
-
-Returns success status and message.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      library_name: { type: "string", description: "Name of the library to switch to" }
-    },
-    required: ["library_name"]
-  }
-};
-
-const GET_LIBRARY_INFO_TOOL: Tool = {
-  name: "get_current_library_info",
-  description: `Get information about the currently active memory library.
-
-Shows current library name, number of nodes, sessions, and other metadata.
-
-Returns current library information.`,
-  inputSchema: {
-    type: "object",
-    properties: {},
-    required: []
-  }
-};
-
-const CREATE_SYSTEM_JSON_TOOL: Tool = {
-  name: "create_system_json",
-  description: `Create a new system JSON file for storing coherent detailed searchable data or instructions and workflows for any domain or action.
-
-Parameters:
-- name: Name for the system JSON file (required) - alphanumeric, underscore, hyphen only
-- domain: Domain or category for the data (required)
-- description: Description of what this system JSON contains (required)
-- data: The structured data to store (required) - can be any JSON-serializable object
-- tags: Optional array of tags for searchability
-
-Returns success status and confirmation message.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      name: { type: "string", description: "Name for the system JSON file (alphanumeric, underscore, hyphen only)" },
-      domain: { type: "string", description: "Domain or category for the data" },
-      description: { type: "string", description: "Description of what this system JSON contains" },
-      data: { type: "object", description: "The structured data to store" },
-      tags: { type: "array", items: { type: "string" }, description: "Optional array of tags for searchability" }
-    },
-    required: ["name", "domain", "description", "data"]
-  }
-};
-
-const GET_SYSTEM_JSON_TOOL: Tool = {
-  name: "get_system_json",
-  description: `Retrieve a system JSON file by name.
-
-Parameters:
-- name: Name of the system JSON file to retrieve (required)
-
-Returns the complete system JSON data including metadata and content.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      name: { type: "string", description: "Name of the system JSON file to retrieve" }
-    },
-    required: ["name"]
-  }
-};
-
-const SEARCH_SYSTEM_JSON_TOOL: Tool = {
-  name: "search_system_json",
-  description: `Search through system JSON files by query.
-
-Parameters:
-- query: Search query to find matching system JSON files (required)
-
-Returns matching files with relevance scores.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      query: { type: "string", description: "Search query to find matching system JSON files" }
-    },
-    required: ["query"]
-  }
-};
-
-const LIST_SYSTEM_JSON_TOOL: Tool = {
-  name: "list_system_json",
-  description: `List all available system JSON files.
-
-Returns list of all system JSON files with their names, domains, and descriptions.`,
-  inputSchema: {
-    type: "object",
-    properties: {},
-    required: []
-  }
+const advancedReasoningShape = {
+  thought: z.string().describe("Your current reasoning step"),
+  nextThoughtNeeded: z
+    .boolean()
+    .describe("Whether another thought step is needed"),
+  thoughtNumber: z.number().int().min(1).describe("Current thought number"),
+  totalThoughts: z
+    .number()
+    .int()
+    .min(1)
+    .describe("Estimated total thoughts needed"),
+  confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(0.5)
+    .describe("Confidence in this reasoning step (0.0-1.0)"),
+  reasoning_quality: z
+    .enum(["low", "medium", "high"])
+    .default("medium")
+    .describe("Assessment of reasoning quality"),
+  meta_thought: z
+    .string()
+    .default("")
+    .describe("Meta-cognitive reflection on your reasoning process"),
+  goal: z.string().optional().describe("Overall goal or objective"),
+  progress: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Progress toward goal (0.0-1.0)"),
+  hypothesis: z.string().optional().describe("Current working hypothesis"),
+  test_plan: z.string().optional().describe("Plan for testing the hypothesis"),
+  test_result: z.string().optional().describe("Result of hypothesis testing"),
+  evidence: z
+    .array(z.string())
+    .optional()
+    .describe("Evidence for/against the hypothesis"),
+  session_id: z
+    .string()
+    .optional()
+    .describe("Reasoning session id; pass to persist this thought to memory"),
+  builds_on: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Node IDs of prior thoughts this builds on (creates graph edges)",
+    ),
+  challenges: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Node IDs of prior thoughts this challenges/contradicts (creates graph edges)",
+    ),
+  isRevision: z
+    .boolean()
+    .optional()
+    .describe("Whether this revises previous thinking"),
+  revisesThought: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe("Which thought is being reconsidered"),
+  branchFromThought: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe("Branching point thought number"),
+  branchId: z
+    .string()
+    .regex(/^[a-zA-Z0-9_-]+$/, "Branch ID must contain only alphanumeric characters, underscores, or hyphens")
+    .optional()
+    .describe("Branch identifier"),
+  needsMoreThoughts: z
+    .boolean()
+    .optional()
+    .describe("If more thoughts are needed"),
 };
 
 // ===== SERVER SETUP =====
 
-const server = new Server(
-  {
-    name: "advanced-reasoning-server",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
-
 const reasoningServer = new AdvancedReasoningServer();
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    ADVANCED_REASONING_TOOL,
-    QUERY_MEMORY_TOOL,
-    CREATE_LIBRARY_TOOL,
-    LIST_LIBRARIES_TOOL,
-    SWITCH_LIBRARY_TOOL,
-    GET_LIBRARY_INFO_TOOL,
-    CREATE_SYSTEM_JSON_TOOL,
-    GET_SYSTEM_JSON_TOOL,
-    SEARCH_SYSTEM_JSON_TOOL,
-    LIST_SYSTEM_JSON_TOOL
-  ],
-}));
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  switch (name) {
-    case "advanced_reasoning":
-      return reasoningServer.processAdvancedThought(args);
-
-    case "query_reasoning_memory":
-      const { session_id, query } = args as { session_id: string; query: string };
-      return reasoningServer.queryMemory(session_id, query);
-
-    case "create_memory_library":
-      const { library_name: createLibName } = args as { library_name: string };
-      return await reasoningServer.createLibrary(createLibName);
-
-    case "list_memory_libraries":
-      return await reasoningServer.listLibraries();
-
-    case "switch_memory_library":
-      const { library_name: switchLibName } = args as { library_name: string };
-      return await reasoningServer.switchLibrary(switchLibName);
-
-    case "get_current_library_info":
-      return reasoningServer.getCurrentLibraryInfo();
-
-    case "create_system_json":
-      const { name: sysJsonName, domain, description, data, tags } = args as {
-        name: string;
-        domain: string;
-        description: string;
-        data: Record<string, unknown>;
-        tags?: string[]
-      };
-      return await reasoningServer.createSystemJSON(sysJsonName, domain, description, data, tags);
-
-    case "get_system_json":
-      const { name: getSysJsonName } = args as { name: string };
-      return await reasoningServer.getSystemJSON(getSysJsonName);
-
-    case "search_system_json":
-      const { query: searchQuery } = args as { query: string };
-      return await reasoningServer.searchSystemJSON(searchQuery);
-
-    case "list_system_json":
-      return await reasoningServer.listSystemJSON();
-
-    default:
-      return {
-        content: [{
-          type: "text",
-          text: `Unknown tool: ${name}`
-        }],
-        isError: true
-      };
-  }
+const server = new McpServer({
+  name: "advanced-reasoning-server",
+  version: "1.1.0",
 });
 
-async function runServer() {
+server.registerTool(
+  "advanced_reasoning",
+  {
+    title: "Advanced Reasoning",
+    description: `Advanced cognitive reasoning that builds on sequential thinking with meta-cognition, hypothesis testing, and integrated graph memory.
+
+Key features: confidence tracking, reasoning-quality assessment, meta-cognitive reflection, hypothesis formulation/testing, evidence tracking, and session-based memory.
+
+Pass session_id (create one with create_reasoning_session, or reuse any string) to persist thoughts to the memory graph. Without session_id, the thought is processed but not stored. Use builds_on / challenges with prior node IDs to wire up the reasoning graph. Use isRevision/revisesThought to revise, and branchFromThought/branchId to explore alternatives.`,
+    inputSchema: advancedReasoningShape,
+  },
+  async (args) =>
+    reasoningServer.processAdvancedThought(args as AdvancedThoughtData),
+);
+
+server.registerTool(
+  "create_reasoning_session",
+  {
+    title: "Create Reasoning Session",
+    description:
+      "Create a named reasoning session for a goal and return its session_id. Pass that id to advanced_reasoning to persist a connected chain of thoughts to memory. Optionally switch/target a memory library.",
+    inputSchema: {
+      goal: z.string().describe("The objective for this reasoning session"),
+      library_name: z
+        .string()
+        .optional()
+        .describe("Optional memory library to use for this session"),
+    },
+  },
+  async ({ goal, library_name }) =>
+    reasoningServer.createSession(goal, library_name),
+);
+
+server.registerTool(
+  "query_reasoning_memory",
+  {
+    title: "Query Reasoning Memory",
+    description:
+      "Search the integrated memory graph for related insights, hypotheses, and evidence using TF-IDF relevance. session_id is optional and, if given, includes that session's context.",
+    inputSchema: {
+      query: z.string().describe("What to search for in memory"),
+      session_id: z
+        .string()
+        .optional()
+        .describe("Optional session to include context for"),
+    },
+  },
+  async ({ query, session_id }) =>
+    reasoningServer.queryMemory(query, session_id),
+);
+
+server.registerTool(
+  "create_memory_library",
+  {
+    title: "Create Memory Library",
+    description:
+      "Create a new named memory library for organized knowledge storage. Names may contain only letters, numbers, underscores, and hyphens.",
+    inputSchema: {
+      library_name: z.string().describe("Name for the new memory library"),
+    },
+  },
+  async ({ library_name }) => reasoningServer.createLibrary(library_name),
+);
+
+server.registerTool(
+  "list_memory_libraries",
+  {
+    title: "List Memory Libraries",
+    description:
+      "List all available memory libraries with node counts and last-modified dates.",
+    inputSchema: {},
+  },
+  async () => reasoningServer.listLibraries(),
+);
+
+server.registerTool(
+  "switch_memory_library",
+  {
+    title: "Switch Memory Library",
+    description:
+      "Switch to a different memory library. Current state is saved before switching.",
+    inputSchema: {
+      library_name: z.string().describe("Name of the library to switch to"),
+    },
+  },
+  async ({ library_name }) => reasoningServer.switchLibrary(library_name),
+);
+
+server.registerTool(
+  "get_current_library_info",
+  {
+    title: "Get Current Library Info",
+    description:
+      "Get the active memory library name plus node/session/connection statistics.",
+    inputSchema: {},
+  },
+  async () => reasoningServer.getCurrentLibraryInfo(),
+);
+
+server.registerTool(
+  "create_system_json",
+  {
+    title: "Create System JSON",
+    description:
+      "Create a structured, searchable JSON document for workflows, instructions, or domain data. Name must be alphanumeric/underscore/hyphen only.",
+    inputSchema: {
+      name: z
+        .string()
+        .describe(
+          "Name for the system JSON file (alphanumeric, underscore, hyphen)",
+        ),
+      domain: z.string().describe("Domain or category for the data"),
+      description: z
+        .string()
+        .describe("Description of what this system JSON contains"),
+      data: z
+        .record(z.string(), z.unknown())
+        .describe("The structured data to store"),
+      tags: z
+        .array(z.string())
+        .optional()
+        .describe("Optional tags for searchability"),
+    },
+  },
+  async ({ name, domain, description, data, tags }) =>
+    reasoningServer.createSystemJSON(name, domain, description, data, tags),
+);
+
+server.registerTool(
+  "get_system_json",
+  {
+    title: "Get System JSON",
+    description:
+      "Retrieve a system JSON document by name, including metadata and content.",
+    inputSchema: {
+      name: z.string().describe("Name of the system JSON file to retrieve"),
+    },
+  },
+  async ({ name }) => reasoningServer.getSystemJSON(name),
+);
+
+server.registerTool(
+  "search_system_json",
+  {
+    title: "Search System JSON",
+    description:
+      "Search system JSON documents by query, returning matches with relevance scores.",
+    inputSchema: {
+      query: z
+        .string()
+        .describe("Search query to find matching system JSON files"),
+    },
+  },
+  async ({ query }) => reasoningServer.searchSystemJSON(query),
+);
+
+server.registerTool(
+  "list_system_json",
+  {
+    title: "List System JSON",
+    description:
+      "List all system JSON documents with their names, domains, and descriptions.",
+    inputSchema: {},
+  },
+  async () => reasoningServer.listSystemJSON(),
+);
+
+// ===== RUN =====
+
+async function runServer(): Promise<void> {
+  // Ensure persisted memory/system data is loaded before serving requests.
+  await reasoningServer.ready();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Advanced Reasoning MCP Server running on stdio");
+
+  const shutdown = async () => {
+    try {
+      await server.close();
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 runServer().catch((error) => {
